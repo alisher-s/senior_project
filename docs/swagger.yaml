@@ -1,0 +1,454 @@
+basePath: /api/v1
+definitions:
+  app.HealthzResponse:
+    properties:
+      status:
+        type: string
+    type: object
+  handler.AuthResponseDTO:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+      user:
+        $ref: '#/definitions/handler.UserDTO'
+    type: object
+  handler.CreateEventRequestDTO:
+    properties:
+      capacity_total:
+        maximum: 100000
+        minimum: 1
+        type: integer
+      description:
+        maxLength: 2000
+        type: string
+      starts_at:
+        type: string
+      title:
+        maxLength: 120
+        minLength: 3
+        type: string
+    required:
+    - capacity_total
+    - starts_at
+    - title
+    type: object
+  handler.EventDTO:
+    properties:
+      capacity_available:
+        type: integer
+      capacity_total:
+        type: integer
+      description:
+        type: string
+      id:
+        type: string
+      starts_at:
+        type: string
+      title:
+        type: string
+    type: object
+  handler.ListEventsResponseDTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.EventDTO'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+    type: object
+  handler.LoginRequestDTO:
+    properties:
+      email:
+        type: string
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  handler.RefreshRequestDTO:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  handler.RegisterRequestDTO:
+    properties:
+      email:
+        type: string
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  handler.RegisterTicketRequestDTO:
+    properties:
+      event_id:
+        type: string
+    required:
+    - event_id
+    type: object
+  handler.RegisterTicketResponseDTO:
+    properties:
+      event_id:
+        type: string
+      qr_hash_hex:
+        type: string
+      qr_png_base64:
+        type: string
+      status:
+        type: string
+      ticket_id:
+        type: string
+      user_id:
+        type: string
+    type: object
+  handler.UpdateEventRequestDTO:
+    properties:
+      capacity_total:
+        maximum: 100000
+        minimum: 1
+        type: integer
+      description:
+        maxLength: 2000
+        type: string
+      starts_at:
+        type: string
+      title:
+        maxLength: 120
+        minLength: 3
+        type: string
+    type: object
+  handler.UserDTO:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+    type: object
+  httpx.ErrorBody:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  httpx.ErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/httpx.ErrorBody'
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Modular monolith backend (Go + Chi).
+  title: Student Event Ticketing Platform API
+  version: "0.1"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.LoginRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AuthResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Login and get tokens
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.RefreshRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AuthResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Refresh access token using refresh token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Register request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.RegisterRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.AuthResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /events:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Limit
+        in: query
+        name: limit
+        type: integer
+      - description: Offset
+        in: query
+        name: offset
+        type: integer
+      - description: Filter starts_after (RFC3339)
+        in: query
+        name: starts_after
+        type: string
+      - description: Filter starts_before (RFC3339)
+        in: query
+        name: starts_before
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListEventsResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List events
+      tags:
+      - events
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create event request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateEventRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.EventDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Create an event
+      tags:
+      - events
+  /events/{id}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Delete event by ID
+      tags:
+      - events
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.EventDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Get event by ID
+      tags:
+      - events
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update event request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateEventRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.EventDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Update event by ID
+      tags:
+      - events
+  /healthz:
+    get:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/app.HealthzResponse'
+      summary: Health check
+      tags:
+      - system
+  /tickets/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Register ticket request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.RegisterTicketRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.RegisterTicketResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Register a ticket for an event
+      tags:
+      - tickets
+schemes:
+- http
+swagger: "2.0"

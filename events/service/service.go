@@ -1,0 +1,61 @@
+package service
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/nu/student-event-ticketing-platform/events/model"
+	"github.com/nu/student-event-ticketing-platform/events/repository"
+)
+
+type Service struct {
+	repo repository.EventRepository
+}
+
+func New(repo repository.EventRepository) *Service {
+	return &Service{repo: repo}
+}
+
+func (s *Service) Create(ctx context.Context, title, description string, startsAt time.Time, capacityTotal int) (model.Event, error) {
+	e := model.Event{
+		Title:              title,
+		Description:       description,
+		StartsAt:          startsAt,
+		CapacityTotal:     capacityTotal,
+		CapacityAvailable: capacityTotal,
+	}
+	ev, err := s.repo.Create(ctx, e)
+	if err != nil {
+		return model.Event{}, err
+	}
+	return ev, nil
+}
+
+func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
+func (s *Service) List(ctx context.Context, filter repository.EventFilter) ([]model.Event, error) {
+	return s.repo.List(ctx, filter)
+}
+
+func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, startsAt *time.Time, capacityTotal *int) (model.Event, error) {
+	patch := repository.EventPatch{
+		Title:             title,
+		Description:       description,
+		StartsAt:          startsAt,
+		CapacityTotal:     capacityTotal,
+	}
+	updated, err := s.repo.Update(ctx, id, patch)
+	if err != nil {
+		return model.Event{}, err
+	}
+	return updated, nil
+}
+
+func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
+	return s.repo.Delete(ctx, id)
+}
+

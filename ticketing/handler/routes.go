@@ -1,0 +1,217 @@
+package handler
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"log/slog"
+
+	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
+	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	"github.com/nu/student-event-ticketing-platform/ticketing/repository"
+	"github.com/nu/student-event-ticketing-platform/ticketing/service"
+)
+
+type Deps struct {
+	DB    *pgxpool.Pool
+	Redis *redis.Client
+	JWT   authx.JWT
+	Cfg   struct{}
+	Logger *slog.Logger
+}
+
+func RegisterRoutes(r chi.Router, deps Deps) {
+	repo := repository.NewPostgres(deps.DB)
+	svc := service.New(repo)
+	h := &handler{repo: repo, svc: svc, v: validator.New()}
+
+	r.With(
+		authx.AuthMiddleware(deps.JWT),
+	).Route("/tickets", func(r chi.Router) {
+		r.With(authx.RequireRole(authx.RoleStudent)).Post("/register", h.handleRegister)
+		r.With(authx.RequireRole(authx.RoleStudent)).Post("/{id}/cancel", h.handleCancel)
+		r.With(authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/use", h.handleUse)
+	})
+}
+
+type handler struct {
+	repo repository.TicketRepository
+	svc  *service.Service
+	v    *validator.Validate
+}
+
+// @Summary Register a ticket for an event
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Param request body RegisterTicketRequestDTO true "Register ticket request"
+// @Success 201 {object} RegisterTicketResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 404 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse
+// @Router /tickets/register [post]
+func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var req RegisterTicketRequestDTO
+	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
+		})
+		return
+	}
+
+	eventID, err := uuid.Parse(strings.TrimSpace(req.EventID))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event_id"},
+		})
+		return
+	}
+
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	ticket, qrPNGBase64, err := h.svc.RegisterTicket(r.Context(), userID, eventID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, RegisterTicketResponseDTO{
+		TicketID:     ticket.ID.String(),
+		EventID:      ticket.EventID.String(),
+		UserID:       ticket.UserID.String(),
+		Status:       string(ticket.Status),
+		QRPNGBase64:  qrPNGBase64,
+		QRHashHex:    ticket.QRHashHex,
+	})
+}
+
+// @Summary Cancel a ticket
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Param id path string true "Ticket ID (UUID)"
+// @Success 200 {object} CancelTicketResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 404 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse
+// @Router /tickets/{id}/cancel [post]
+func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	ticketID, err := uuid.Parse(idStr)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid ticket id"},
+		})
+		return
+	}
+
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	ticket, err := h.svc.CancelTicket(r.Context(), userID, ticketID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, CancelTicketResponseDTO{
+		TicketID: ticket.ID.String(),
+		EventID:  ticket.EventID.String(),
+		UserID:   ticket.UserID.String(),
+		Status:   string(ticket.Status),
+	})
+}
+
+// @Summary Mark ticket as used
+// @Tags tickets
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Param request body UseTicketRequestDTO true "Use ticket request"
+// @Success 200 {object} UseTicketResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 404 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse
+// @Router /tickets/use [post]
+func (h *handler) handleUse(w http.ResponseWriter, r *http.Request) {
+	var req UseTicketRequestDTO
+	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
+		})
+		return
+	}
+
+	ticket, err := h.svc.UseTicketByQRHash(r.Context(), req.QRHashHex)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, UseTicketResponseDTO{
+		TicketID: ticket.ID.String(),
+		EventID:  ticket.EventID.String(),
+		UserID:   ticket.UserID.String(),
+		Status:   string(ticket.Status),
+	})
+}
+
+func writeServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, repository.ErrEventNotFound), errors.Is(err, service.ErrEventNotFound):
+		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+		})
+	case errors.Is(err, repository.ErrCapacityFull), errors.Is(err, service.ErrCapacityFull):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "capacity_full", Message: "event capacity is full"},
+		})
+	case errors.Is(err, repository.ErrAlreadyRegistered), errors.Is(err, service.ErrAlreadyRegistered):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "already_registered", Message: "ticket already exists"},
+		})
+	case errors.Is(err, repository.ErrTicketNotFound), errors.Is(err, service.ErrTicketNotFound):
+		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "ticket_not_found", Message: "ticket not found"},
+		})
+	case errors.Is(err, repository.ErrTicketAlreadyCancelled), errors.Is(err, service.ErrTicketAlreadyCancelled):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "ticket_already_cancelled", Message: "ticket already cancelled"},
+		})
+	case errors.Is(err, repository.ErrTicketAlreadyUsed), errors.Is(err, service.ErrTicketAlreadyUsed):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "ticket_already_used", Message: "ticket already used"},
+		})
+	case errors.Is(err, repository.ErrTicketCannotBeUsed), errors.Is(err, service.ErrTicketCannotBeUsed):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "ticket_cannot_be_used", Message: "ticket cannot be used"},
+		})
+	default:
+		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
+		})
+	}
+}
+

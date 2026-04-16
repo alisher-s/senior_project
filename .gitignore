@@ -1,0 +1,12 @@
+.env
+*.env
+/bin/
+/dist/
+api
+./api
+*.log
+coverage.out
+.DS_Store
+.idea/
+.vscode/
+
