@@ -6,6 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
+type EventStatus string
+
+const (
+	EventStatusDraft      EventStatus = "draft"
+	EventStatusPublished  EventStatus = "published"
+	EventStatusCancelled  EventStatus = "cancelled"
+)
+
 type Event struct {
 	ID                  uuid.UUID
 	Title               string
@@ -13,6 +21,7 @@ type Event struct {
 	StartsAt            time.Time
 	CapacityTotal      int
 	CapacityAvailable  int
+	Status              EventStatus
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }

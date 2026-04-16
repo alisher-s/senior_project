@@ -1,6 +1,7 @@
--- Auth module schema (users + refresh tokens)
--- This is intentionally kept minimal for foundation. For production,
--- migrate with a proper migration tool (golang-migrate/sqlc/sqlx + CI).
+-- 001 — base schema for auth, events, ticketing (happy path).
+-- Applied automatically on first Postgres init via docker-compose (docker-entrypoint-initdb.d)
+-- or manually / in CI: scripts/apply-migrations.sh (lexicographic order).
+-- For production, consider golang-migrate (versioned, tracked) on top of this baseline.
 
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY,

@@ -63,8 +63,8 @@ func TestTicketCapacityRace(t *testing.T) {
 	eventID := uuid.New()
 	capacityTotal := 2
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available)
-		VALUES ($1, 'e', 'd', NOW(), $2, $2)
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published')
 	`, eventID, capacityTotal)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -191,8 +191,8 @@ func TestPaymentsWebhookIdempotentCancelsTicket(t *testing.T) {
 	eventID := uuid.New()
 	capacityTotal := 1
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available)
-		VALUES ($1, 'e', 'd', NOW(), $2, $2)
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published')
 	`, eventID, capacityTotal)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -245,6 +245,71 @@ func TestPaymentsWebhookIdempotentCancelsTicket(t *testing.T) {
 		if capacityAvailable != capacityTotal {
 			t.Fatalf("capacity should remain released after idempotent webhook calls, got %d", capacityAvailable)
 		}
+	}
+}
+
+func TestDoubleRegistrationReturnsConflict(t *testing.T) {
+	ctx, pool := connectDBOrSkip(t)
+
+	_, _ = pool.Exec(ctx, `TRUNCATE TABLE payments, tickets, events, refresh_tokens, users RESTART IDENTITY CASCADE`)
+
+	userID := uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, password_hash, role)
+		VALUES ($1, $2, 'x', 'student')
+	`, userID, "u_"+uuid.NewString()+"@nu.edu.kz")
+	if err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	eventID := uuid.New()
+	_, err = pool.Exec(ctx, `
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'published')
+	`, eventID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	repo := ticketingRepo.NewPostgres(pool)
+	svc := ticketingService.New(repo)
+
+	if _, _, err := svc.RegisterTicket(ctx, userID, eventID); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	_, _, err = svc.RegisterTicket(ctx, userID, eventID)
+	if !errors.Is(err, ticketingRepo.ErrAlreadyRegistered) {
+		t.Fatalf("expected ErrAlreadyRegistered, got %v", err)
+	}
+}
+
+func TestRegisterRejectedWhenEventCancelled(t *testing.T) {
+	ctx, pool := connectDBOrSkip(t)
+
+	_, _ = pool.Exec(ctx, `TRUNCATE TABLE payments, tickets, events, refresh_tokens, users RESTART IDENTITY CASCADE`)
+
+	userID := uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, password_hash, role)
+		VALUES ($1, $2, 'x', 'student')
+	`, userID, "u_"+uuid.NewString()+"@nu.edu.kz")
+	if err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	eventID := uuid.New()
+	_, err = pool.Exec(ctx, `
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'cancelled')
+	`, eventID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	svc := ticketingService.New(ticketingRepo.NewPostgres(pool))
+	_, _, err = svc.RegisterTicket(ctx, userID, eventID)
+	if !errors.Is(err, ticketingRepo.ErrEventCancelled) {
+		t.Fatalf("expected ErrEventCancelled, got %v", err)
 	}
 }
 

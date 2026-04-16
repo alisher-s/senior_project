@@ -14,6 +14,7 @@ type UpdateEventRequestDTO struct {
 	Description   *string   `json:"description,omitempty" validate:"omitempty,max=2000"`
 	StartsAt      *time.Time `json:"starts_at,omitempty"`
 	CapacityTotal *int      `json:"capacity_total,omitempty" validate:"omitempty,min=1,max=100000"`
+	Status        *string   `json:"status,omitempty" validate:"omitempty,oneof=draft published cancelled"`
 }
 
 type EventDTO struct {
@@ -23,6 +24,7 @@ type EventDTO struct {
 	StartsAt           time.Time `json:"starts_at"`
 	CapacityTotal      int       `json:"capacity_total"`
 	CapacityAvailable  int       `json:"capacity_available"`
+	Status             string    `json:"status"`
 }
 
 type ListEventsResponseDTO struct {

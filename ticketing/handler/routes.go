@@ -192,6 +192,26 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "already_registered", Message: "ticket already exists"},
 		})
+	case errors.Is(err, repository.ErrEventNotPublished), errors.Is(err, service.ErrEventNotPublished):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "event_not_published", Message: "event is not open for registration"},
+		})
+	case errors.Is(err, repository.ErrEventCancelled), errors.Is(err, service.ErrEventCancelled):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "event_cancelled", Message: "event is cancelled"},
+		})
+	case errors.Is(err, repository.ErrEventRegistrationClosed), errors.Is(err, service.ErrEventRegistrationClosed):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "registration_closed", Message: "registration is closed for this event"},
+		})
+	case errors.Is(err, repository.ErrCancellationNotAllowed), errors.Is(err, service.ErrCancellationNotAllowed):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "cancellation_not_allowed", Message: "ticket cannot be cancelled after the event has started"},
+		})
+	case errors.Is(err, repository.ErrCheckInNotOpenYet), errors.Is(err, service.ErrCheckInNotOpenYet):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "check_in_not_open", Message: "check-in is not open yet for this event"},
+		})
 	case errors.Is(err, repository.ErrTicketNotFound), errors.Is(err, service.ErrTicketNotFound):
 		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "ticket_not_found", Message: "ticket not found"},

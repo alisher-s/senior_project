@@ -24,11 +24,15 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, error) {
 	id := uuid.New()
 	var created model.Event
+	st := e.Status
+	if st == "" {
+		st = model.EventStatusPublished
+	}
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, title, description, starts_at, capacity_total, capacity_available, created_at, updated_at
-	`, id, e.Title, e.Description, e.StartsAt, e.CapacityTotal, e.CapacityAvailable).
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
+	`, id, e.Title, e.Description, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st).
 		Scan(
 			&created.ID,
 			&created.Title,
@@ -36,6 +40,7 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 			&created.StartsAt,
 			&created.CapacityTotal,
 			&created.CapacityAvailable,
+			&created.Status,
 			&created.CreatedAt,
 			&created.UpdatedAt,
 		)
@@ -48,7 +53,7 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
 	var e model.Event
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, title, description, starts_at, capacity_total, capacity_available, created_at, updated_at
+		SELECT id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
 		FROM events
 		WHERE id = $1
 	`, id).Scan(
@@ -58,6 +63,7 @@ func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, erro
 		&e.StartsAt,
 		&e.CapacityTotal,
 		&e.CapacityAvailable,
+		&e.Status,
 		&e.CreatedAt,
 		&e.UpdatedAt,
 	)
@@ -99,7 +105,7 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, title, description, starts_at, capacity_total, capacity_available, created_at, updated_at
+		SELECT id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
 		FROM events
 		WHERE %s
 		ORDER BY starts_at DESC
@@ -123,6 +129,7 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 			&e.StartsAt,
 			&e.CapacityTotal,
 			&e.CapacityAvailable,
+			&e.Status,
 			&e.CreatedAt,
 			&e.UpdatedAt,
 		); err != nil {
@@ -174,6 +181,11 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 			patchValPos,
 		))
 	}
+	if patch.Status != nil {
+		set = append(set, fmt.Sprintf("status = $%d", argPos))
+		args = append(args, string(*patch.Status))
+		argPos++
+	}
 
 	if len(set) == 0 {
 		return p.GetByID(ctx, id)
@@ -184,7 +196,7 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		UPDATE events
 		SET %s, updated_at = NOW()
 		WHERE id = $%d
-		RETURNING id, title, description, starts_at, capacity_total, capacity_available, created_at, updated_at
+		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
 	`, strings.Join(set, ", "), argPos)
 
 	var e model.Event
@@ -195,6 +207,7 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		&e.StartsAt,
 		&e.CapacityTotal,
 		&e.CapacityAvailable,
+		&e.Status,
 		&e.CreatedAt,
 		&e.UpdatedAt,
 	)

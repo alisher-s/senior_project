@@ -27,7 +27,12 @@
 - **Регистрация:** `POST /api/v1/auth/register` принимает только email в домене из `AUTH_NU_EMAIL_DOMAIN` (по умолчанию `nu.edu.kz`). Новым пользователям назначается роль **`student`**.
 - **Роли в токене:** строки `student`, `organizer`, `admin` (см. контракт ответа `user.role`).
 
-Важно: **создать `organizer` / `admin` через публичный API нельзя** — только через БД/сидирование для разработки. Без этого недоступны сценарии «сканирование QR» (`/tickets/use`) и админ-модерация.
+**Как получить `organizer` / `admin` (не через register):**
+
+1. **Сид в миграциях (локально / CI):** файл `docker/postgres/migrations/006_dev_staff_users.sql` создаёт учётки `staff.organizer@nu.edu.kz` и `staff.admin@nu.edu.kz` с паролем **`DevStaffPass1!`** (общий для обоих). Миграции выполняются при **первом** создании тома Postgres; при уже существующей БД — пересоздайте том или примените SQL вручную.
+2. **Админский API:** `PATCH /api/v1/admin/users/{id}/role` с телом `{"role":"organizer"}` или `"admin"` / `"student"`. Доступен только с JWT роли **`admin`**. После смены роли у пользователя **отзываются все refresh-токены** — нужен повторный `login` / `refresh` уже с новой ролью.
+
+Публичная регистрация **никогда** не выдаёт `organizer`/`admin` — это сделано намеренно.
 
 ---
 
@@ -63,7 +68,7 @@
 | POST | `/events/` | Нет | — | Создание события (`title`, `description`, `starts_at`, `capacity_total`) |
 | GET | `/events/` | Нет | — | Список; query: `limit`, `offset`, `q`, `starts_after`, `starts_before` |
 | GET | `/events/{id}` | Нет | — | Карточка события |
-| PUT | `/events/{id}` | Нет | — | Обновление |
+| PUT | `/events/{id}` | Нет | — | Обновление (опционально `status`: `draft` / `published` / `cancelled`) |
 | DELETE | `/events/{id}` | Нет | — | Удаление |
 | POST | `/tickets/register` | Bearer | `student` | Регистрация на событие (`event_id`); ответ содержит `qr_png_base64`, `qr_hash_hex` |
 | POST | `/tickets/{id}/cancel` | Bearer | `student` | Отмена своего билета |
@@ -72,6 +77,7 @@
 | POST | `/payments/webhook` | Нет (подпись) | — | Webhook провайдера: заголовок **`X-Signature`** — hex HMAC-SHA256 от **сырого** тела; секрет `PAYMENTS_WEBHOOK_SECRET`. Для мобилки/веба обычно не вызывается |
 | POST | `/notifications/send-email` | Нет | — | Постановка письма в очередь (`to`, `title`, `body`); см. статус модуля ниже |
 | GET | `/analytics/events/stats` | Bearer | Любая роль из токена | Статистика; query `event_id` опционален |
+| PATCH | `/admin/users/{id}/role` | Bearer | `admin` | Назначение роли пользователю (`{"role":"student"|"organizer"|"admin"}`) |
 | POST | `/admin/events/{id}/moderate` | Bearer | `admin` | Модерация события (`action` в теле) |
 
 Ответы регистрации/логина (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
@@ -99,7 +105,7 @@
 | **ticketing** | Регистрация, QR, отмена; скан — только `organizer`/`admin` |
 | **payments** | Инициация и webhook заложены; провайдер и продуктовая логика могут быть упрощены — уточняйте у бэкенда перед продакшен-сценарием |
 | **notifications** | Очередь и worker есть; HTTP `send-email` может отвечать **501 Not Implemented**, если отправка ещё не подключена — смотрите тело ошибки |
-| **admin** | Маршрут модерации под ролью `admin` |
+| **admin** | Смена роли пользователя (`PATCH .../users/{id}/role`); модерация событий — заглушка (может отвечать **501**) |
 | **analytics** | Может отвечать **501**, пока аналитика не реализована |
 
 ---
@@ -161,6 +167,28 @@ curl -sS -X POST http://localhost:8080/api/v1/tickets/register \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <access_token>" \
   -d '{"event_id":"<uuid>"}'
+```
+
+Вход как staff-организатор (после применения миграции `006_dev_staff_users.sql`) и отметка входа по QR:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"staff.organizer@nu.edu.kz","password":"DevStaffPass1!"}'
+
+curl -sS -X POST http://localhost:8080/api/v1/tickets/use \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <organizer_access_token>" \
+  -d '{"qr_hash_hex":"<hex_from_register_response>"}'
+```
+
+Назначить пользователю роль `organizer` (нужен токен **admin** — например `staff.admin@nu.edu.kz`):
+
+```bash
+curl -sS -X PATCH "http://localhost:8080/api/v1/admin/users/<user_uuid>/role" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{"role":"organizer"}'
 ```
 
 ---

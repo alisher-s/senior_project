@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	"github.com/nu/student-event-ticketing-platform/events/model"
 	"github.com/nu/student-event-ticketing-platform/events/repository"
 	"github.com/nu/student-event-ticketing-platform/events/service"
 )
@@ -73,6 +74,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          ev.StartsAt,
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
+		Status:            string(ev.Status),
 	})
 }
 
@@ -162,6 +164,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 			StartsAt:          ev.StartsAt,
 			CapacityTotal:     ev.CapacityTotal,
 			CapacityAvailable: ev.CapacityAvailable,
+			Status:            string(ev.Status),
 		})
 	}
 
@@ -212,6 +215,7 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          ev.StartsAt,
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
+		Status:            string(ev.Status),
 	})
 }
 
@@ -243,7 +247,13 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.StartsAt, req.CapacityTotal)
+	var statusPatch *model.EventStatus
+	if req.Status != nil {
+		s := model.EventStatus(*req.Status)
+		statusPatch = &s
+	}
+
+	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.StartsAt, req.CapacityTotal, statusPatch)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
@@ -264,6 +274,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          ev.StartsAt,
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
+		Status:            string(ev.Status),
 	})
 }
 

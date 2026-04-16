@@ -3,6 +3,13 @@
 ## Goal
 After each code change to the backend, refresh the running backend (using Docker via OrbStack) and run a small smoke-test suite to ensure endpoints still work.
 
+## Database migrations (single happy-path schema)
+- **Source of truth:** `docker/postgres/migrations/*.sql` only. Files run in **lexicographic order** (`001_…`, `002_…`, …). Do not duplicate schema elsewhere.
+- **Docker:** `docker-compose` mounts that folder to `docker-entrypoint-initdb.d`. Scripts run **once**, when the Postgres data volume is first created. If you change SQL after a DB already exists, recreate the volume (`docker compose down -v`) or apply manually.
+- **CI / empty DB:** `bash scripts/apply-migrations.sh` (needs `psql`; set `POSTGRES_*` env vars if not using defaults).
+- **Repositories** (`*/repository`) must match these tables/columns; change migrations and code together in one change set when possible.
+- **Dev staff users (check-in / admin):** migration `006_dev_staff_users.sql` inserts `staff.admin@nu.edu.kz` (role `admin`) and `staff.organizer@nu.edu.kz` (role `organizer`). Shared password: `DevStaffPass1!`. For other accounts, an admin may call `PATCH /api/v1/admin/users/{id}/role` with body `{"role":"organizer"}` (or `admin` / `student`); all refresh tokens for that user are revoked so they must log in again.
+
 ## When to refresh
 Refresh backend when changes affect any of these areas:
 - `cmd/api/**`
@@ -33,7 +40,8 @@ Use these checks to validate the system end-to-end:
    - `POST /api/v1/auth/refresh` using the refresh token
 3. Events + Ticketing flow (role-based)
    - `POST /api/v1/events` (create event)
-   - `POST /api/v1/tickets/register` with `Authorization: Bearer <access_token>`
+   - `POST /api/v1/auth/login` as `staff.organizer@nu.edu.kz` / `DevStaffPass1!` when testing check-in (`POST /api/v1/tickets/use` requires organizer or admin).
+   - `POST /api/v1/tickets/register` with `Authorization: Bearer <student_access_token>`
    - Repeat ticket registration for the same event+user and expect a non-201 status (prefer `409`).
 
 ## Compile check

@@ -13,6 +13,8 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, email string, passwordHash string, role model.Role) (model.User, error)
 	GetUserByEmail(ctx context.Context, email string) (model.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (model.User, error)
+	// UpdateUserRole sets role and revokes refresh tokens so JWT/refresh reflect the new role.
+	UpdateUserRole(ctx context.Context, id uuid.UUID, role model.Role) (model.User, error)
 }
 
 type RefreshTokenRepository interface {

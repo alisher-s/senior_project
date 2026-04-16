@@ -25,6 +25,7 @@ func (s *Service) Create(ctx context.Context, title, description string, startsA
 		StartsAt:          startsAt,
 		CapacityTotal:     capacityTotal,
 		CapacityAvailable: capacityTotal,
+		Status:            model.EventStatusPublished,
 	}
 	ev, err := s.repo.Create(ctx, e)
 	if err != nil {
@@ -41,12 +42,13 @@ func (s *Service) List(ctx context.Context, filter repository.EventFilter) ([]mo
 	return s.repo.List(ctx, filter)
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, startsAt *time.Time, capacityTotal *int) (model.Event, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, startsAt *time.Time, capacityTotal *int, status *model.EventStatus) (model.Event, error) {
 	patch := repository.EventPatch{
 		Title:             title,
 		Description:       description,
 		StartsAt:          startsAt,
 		CapacityTotal:     capacityTotal,
+		Status:            status,
 	}
 	updated, err := s.repo.Update(ctx, id, patch)
 	if err != nil {

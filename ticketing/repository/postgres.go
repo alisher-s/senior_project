@@ -21,11 +21,8 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 }
 
 func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID uuid.UUID, qrHashHex string, now time.Time) (model.Ticket, error) {
-	// Critical concurrency decision:
-	// We use a single transaction + conditional UPDATE to prevent overbooking.
-	// Why DB lock (vs Redis atomic decrement) for foundation:
-	// - guarantees consistency between capacity decrement and ticket insert
-	// - fewer moving parts (no Redis script coordination)
+	// Single transaction: lock the event row (FOR UPDATE), enforce status/time/capacity, decrement, insert ticket.
+	// SERIALIZABLE is not required: one mutex row per event serializes registrants.
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return model.Ticket{}, err
@@ -37,7 +34,38 @@ func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID
 		}
 	}()
 
-	// 1) Atomically decrement capacity if available.
+	var startsAt time.Time
+	var evStatus string
+	var capAvail int
+	err = tx.QueryRow(ctx, `
+		SELECT starts_at, status, capacity_available
+		FROM events
+		WHERE id = $1
+		FOR UPDATE
+	`, eventID).Scan(&startsAt, &evStatus, &capAvail)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Ticket{}, ErrEventNotFound
+		}
+		return model.Ticket{}, err
+	}
+
+	switch evStatus {
+	case "published":
+	case "cancelled":
+		return model.Ticket{}, ErrEventCancelled
+	default:
+		return model.Ticket{}, ErrEventNotPublished
+	}
+
+	if !startsAt.After(now) {
+		return model.Ticket{}, ErrEventRegistrationClosed
+	}
+
+	if capAvail <= 0 {
+		return model.Ticket{}, ErrCapacityFull
+	}
+
 	ct, err := tx.Exec(ctx, `
 		UPDATE events
 		SET capacity_available = capacity_available - 1,
@@ -48,17 +76,10 @@ func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID
 		return model.Ticket{}, err
 	}
 	if ct.RowsAffected() == 0 {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id = $1)`, eventID).Scan(&exists); err != nil {
-			return model.Ticket{}, err
-		}
-		if !exists {
-			return model.Ticket{}, ErrEventNotFound
-		}
 		return model.Ticket{}, ErrCapacityFull
 	}
 
-	// 2) Insert ticket. If user already has ticket for this event, rollback capacity decrement.
+	// Insert ticket. Duplicate (event_id, user_id) rolls the transaction back and restores capacity.
 	ticketID := uuid.New()
 	var t model.Ticket
 	err = tx.QueryRow(ctx, `
@@ -111,7 +132,7 @@ func (p *Postgres) GetByEventAndUser(ctx context.Context, eventID uuid.UUID, use
 	return t, nil
 }
 
-func (p *Postgres) CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time) (model.Ticket, error) {
+func (p *Postgres) CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error) {
 	// Transactional lifecycle update + deterministic capacity recomputation.
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -149,11 +170,21 @@ func (p *Postgres) CancelTicket(ctx context.Context, userID uuid.UUID, ticketID 
 		return model.Ticket{}, ErrTicketAlreadyCancelled
 	}
 
-	// Mark ticket as cancelled (allowed only for active/used).
+	var evStarts time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT starts_at FROM events WHERE id = $1 FOR UPDATE
+	`, t.EventID).Scan(&evStarts); err != nil {
+		return model.Ticket{}, err
+	}
+	if !allowAfterEventStart && !evStarts.After(now) {
+		return model.Ticket{}, ErrCancellationNotAllowed
+	}
+
+	// Mark ticket as cancelled (attendee flow: active tickets only; used passes are final).
 	ct, err := tx.Exec(ctx, `
 		UPDATE tickets
 		SET status = $1
-		WHERE id = $2 AND user_id = $3 AND status IN ('active','used')
+		WHERE id = $2 AND user_id = $3 AND status = 'active'
 	`, model.TicketStatusCancelled, ticketID, userID)
 	if err != nil {
 		return model.Ticket{}, err
@@ -245,6 +276,20 @@ func (p *Postgres) UseTicketByQRHash(ctx context.Context, qrHashHex string, now 
 		return model.Ticket{}, ErrTicketCannotBeUsed
 	}
 
+	var evStatus string
+	var evStarts time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT status, starts_at FROM events WHERE id = $1 FOR UPDATE
+	`, t.EventID).Scan(&evStatus, &evStarts); err != nil {
+		return model.Ticket{}, err
+	}
+	if evStatus == "cancelled" {
+		return model.Ticket{}, ErrTicketCannotBeUsed
+	}
+	if evStarts.After(now) {
+		return model.Ticket{}, ErrCheckInNotOpenYet
+	}
+
 	// Mark ticket as used (active -> used).
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets
@@ -298,7 +343,7 @@ func (p *Postgres) UseTicketByQRHash(ctx context.Context, qrHashHex string, now 
 var _ interface {
 	RegisterTicket(ctx context.Context, userID uuid.UUID, eventID uuid.UUID, qrHashHex string, now time.Time) (model.Ticket, error)
 	GetByEventAndUser(ctx context.Context, eventID uuid.UUID, userID uuid.UUID) (model.Ticket, error)
-	CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time) (model.Ticket, error)
+	CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error)
 	UseTicketByQRHash(ctx context.Context, qrHashHex string, now time.Time) (model.Ticket, error)
 } = (*Postgres)(nil)
 

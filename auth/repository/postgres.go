@@ -74,6 +74,27 @@ func (p *Postgres) GetUserByID(ctx context.Context, id uuid.UUID) (model.User, e
 	return u, nil
 }
 
+func (p *Postgres) UpdateUserRole(ctx context.Context, id uuid.UUID, role model.Role) (model.User, error) {
+	if err := p.RevokeTokensByUserID(ctx, id); err != nil {
+		return model.User{}, err
+	}
+
+	var u model.User
+	err := p.pool.QueryRow(ctx, `
+		UPDATE users
+		SET role = $2, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, email, password_hash, role, created_at, updated_at
+	`, id, string(role)).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.User{}, ErrUserNotFound
+		}
+		return model.User{}, err
+	}
+	return u, nil
+}
+
 func (p *Postgres) RevokeTokensByUserID(ctx context.Context, userID uuid.UUID) error {
 	_, err := p.pool.Exec(ctx, `
 		UPDATE refresh_tokens

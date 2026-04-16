@@ -71,7 +71,7 @@ func (s *Service) Webhook(ctx context.Context, providerRef string, status model.
 			return model.Payment{}, err
 		}
 
-		_, err = s.tickets.CancelTicket(ctx, payment.UserID, ticket.ID, now)
+		_, err = s.tickets.CancelTicket(ctx, payment.UserID, ticket.ID, now, true)
 		if err != nil {
 			if errors.Is(err, ticketingRepo.ErrTicketAlreadyCancelled) {
 				return payment, nil // idempotent

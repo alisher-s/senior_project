@@ -30,5 +30,6 @@ type EventPatch struct {
 	Description       *string
 	StartsAt          *time.Time
 	CapacityTotal     *int
+	Status            *model.EventStatus
 }
 

@@ -6,6 +6,11 @@ var (
 	ErrEventNotFound     = errors.New("event not found")
 	ErrCapacityFull      = errors.New("capacity full")
 	ErrAlreadyRegistered = errors.New("already registered")
+	ErrEventNotPublished = errors.New("event is not published")
+	ErrEventCancelled    = errors.New("event is cancelled")
+	ErrEventRegistrationClosed = errors.New("event registration is closed")
+	ErrCancellationNotAllowed = errors.New("ticket cannot be cancelled after event start")
+	ErrCheckInNotOpenYet = errors.New("check-in is not open yet")
 
 	ErrTicketNotFound        = errors.New("ticket not found")
 	ErrTicketAlreadyCancelled = errors.New("ticket already cancelled")

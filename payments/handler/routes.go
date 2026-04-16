@@ -36,7 +36,8 @@ type Deps struct {
 }
 
 func RegisterRoutes(r chi.Router, deps Deps) {
-	repo := repository.NewPostgres(deps.DB)
+	_ = deps.DB
+	repo := repository.NewStub()
 	ticketRepo := ticketingRepository.NewPostgres(deps.DB)
 	svc := service.New(repo, ticketRepo)
 	h := &handler{svc: svc, v: validator.New(), webhookSecret: deps.Cfg.Payments.WebhookSecret}
@@ -85,6 +86,12 @@ func (h *handler) handleInitiate(w http.ResponseWriter, r *http.Request) {
 
 	payment, providerURL, err := h.svc.Initiate(r.Context(), userID, eventID, req.Amount, req.Currency)
 	if err != nil {
+		if errors.Is(err, repository.ErrPaymentsDisabled) {
+			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_implemented", Message: "payments are not enabled yet"},
+			})
+			return
+		}
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "payment initiation failed"},
 		})
@@ -141,6 +148,12 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Signature validation should be implemented before trusting provider payload.
 	_, err = h.svc.Webhook(r.Context(), req.ProviderRef, model.PaymentStatus(req.Status))
 	if err != nil {
+		if errors.Is(err, repository.ErrPaymentsDisabled) {
+			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_implemented", Message: "payments are not enabled yet"},
+			})
+			return
+		}
 		if errors.Is(err, service.ErrPaymentNotFound) || errors.Is(err, repository.ErrPaymentNotFound) {
 			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
 				Error: httpx.ErrorBody{Code: "not_found", Message: "payment not found"},

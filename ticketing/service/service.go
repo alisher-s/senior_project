@@ -70,7 +70,7 @@ func (s *Service) RegisterTicket(ctx context.Context, userID, eventID uuid.UUID)
 
 func (s *Service) CancelTicket(ctx context.Context, userID, ticketID uuid.UUID) (model.Ticket, error) {
 	now := time.Now().UTC()
-	return s.repo.CancelTicket(ctx, userID, ticketID, now)
+	return s.repo.CancelTicket(ctx, userID, ticketID, now, false)
 }
 
 func (s *Service) UseTicketByQRHash(ctx context.Context, qrHashHex string) (model.Ticket, error) {

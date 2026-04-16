@@ -14,6 +14,17 @@ definitions:
       user:
         $ref: '#/definitions/handler.UserDTO'
     type: object
+  handler.CancelTicketResponseDTO:
+    properties:
+      event_id:
+        type: string
+      status:
+        type: string
+      ticket_id:
+        type: string
+      user_id:
+        type: string
+    type: object
   handler.CreateEventRequestDTO:
     properties:
       capacity_total:
@@ -45,6 +56,8 @@ definitions:
       id:
         type: string
       starts_at:
+        type: string
+      status:
         type: string
       title:
         type: string
@@ -91,6 +104,17 @@ definitions:
     - email
     - password
     type: object
+  handler.SetUserRoleRequestDTO:
+    properties:
+      role:
+        enum:
+        - student
+        - organizer
+        - admin
+        type: string
+    required:
+    - role
+    type: object
   handler.RegisterTicketRequestDTO:
     properties:
       event_id:
@@ -124,9 +148,42 @@ definitions:
         type: string
       starts_at:
         type: string
+      status:
+        enum:
+        - draft
+        - published
+        - cancelled
+        type: string
       title:
         maxLength: 120
         minLength: 3
+        type: string
+    type: object
+  handler.UseTicketRequestDTO:
+    properties:
+      qr_hash_hex:
+        type: string
+    required:
+    - qr_hash_hex
+    type: object
+  handler.UseTicketResponseDTO:
+    properties:
+      event_id:
+        type: string
+      status:
+        type: string
+      ticket_id:
+        type: string
+      user_id:
+        type: string
+    type: object
+  handler.UserRoleResponseDTO:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      role:
         type: string
     type: object
   handler.UserDTO:
@@ -157,6 +214,53 @@ info:
   title: Student Event Ticketing Platform API
   version: "0.1"
 paths:
+  /admin/users/{id}/role:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token (admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: User ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.SetUserRoleRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.UserRoleResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Set user role (admin only)
+      tags:
+      - admin
   /auth/login:
     post:
       consumes:
@@ -407,6 +511,47 @@ paths:
       summary: Health check
       tags:
       - system
+  /tickets/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.CancelTicketResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Cancel a ticket
+      tags:
+      - tickets
   /tickets/register:
     post:
       consumes:
@@ -447,6 +592,48 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Register a ticket for an event
+      tags:
+      - tickets
+  /tickets/use:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Use ticket request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UseTicketRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.UseTicketResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Mark ticket as used
       tags:
       - tickets
 schemes:

@@ -47,6 +47,7 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Schema: only docker/postgres/migrations/*.sql (lexicographic order). Runs once per new volume.
       - ./docker/postgres/migrations:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
 
