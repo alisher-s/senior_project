@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -15,8 +14,11 @@ import (
 
 	"github.com/nu/student-event-ticketing-platform/admin/service"
 	authrepo "github.com/nu/student-event-ticketing-platform/auth/repository"
+	eventsrepo "github.com/nu/student-event-ticketing-platform/events/repository"
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	notificationsrepo "github.com/nu/student-event-ticketing-platform/notifications/repository"
+	notificationssvc "github.com/nu/student-event-ticketing-platform/notifications/service"
 )
 
 type Deps struct {
@@ -30,7 +32,14 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	_ = deps.Redis
 
 	userRepo := authrepo.NewPostgres(deps.DB)
-	h := &handler{svc: service.New(userRepo), v: validator.New()}
+	eventRepo := eventsrepo.NewPostgres(deps.DB)
+	notifier := notificationssvc.New(notificationsrepo.NewPostgres(deps.DB))
+	log := deps.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	svc := service.New(userRepo, eventRepo, notifier)
+	h := &handler{svc: svc, v: validator.New(), logger: log}
 
 	r.Route("/admin", func(r chi.Router) {
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Post("/events/{id}/moderate", h.handleModerateEvent)
@@ -39,12 +48,18 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 }
 
 type handler struct {
-	svc *service.Service
-	v   *validator.Validate
+	svc    *service.Service
+	v      *validator.Validate
+	logger *slog.Logger
 }
 
 type ModerateEventRequestDTO struct {
-	Action string `json:"action" validate:"required,min=3,max=64"`
+	Action string `json:"action" validate:"required,oneof=approve reject"`
+	Reason string `json:"reason" validate:"omitempty,max=2000"`
+}
+
+type ModerateEventResponseDTO struct {
+	ModerationStatus string `json:"moderation_status"`
 }
 
 type SetUserRoleRequestDTO struct {
@@ -69,6 +84,7 @@ type UserRoleResponseDTO struct {
 // @Failure 401 {object} httpx.ErrorResponse
 // @Failure 403 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /admin/users/{id}/role [patch]
 func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
@@ -115,6 +131,20 @@ func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Moderate event visibility (admin only)
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token (admin)"
+// @Param id path string true "Event ID (UUID)"
+// @Param request body ModerateEventRequestDTO true "approve or reject"
+// @Success 200 {object} ModerateEventResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 404 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /admin/events/{id}/moderate [post]
 func (h *handler) handleModerateEvent(w http.ResponseWriter, r *http.Request) {
 	eventID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if eventID == "" {
@@ -124,35 +154,46 @@ func (h *handler) handleModerateEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req ModerateEventRequestDTO
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid json"},
+	adminID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
 		})
 		return
 	}
-	if err := h.v.Struct(req); err != nil {
+
+	var req ModerateEventRequestDTO
+	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
 		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
 		})
 		return
 	}
 
-	if err := h.svc.ModerateEvent(r.Context(), eventID, req.Action); err != nil {
-		if errors.Is(err, service.ErrNotImplemented) {
-			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_implemented", Message: "admin moderation not implemented yet"},
+	st, err := h.svc.ModerateEvent(r.Context(), adminID, eventID, req.Action, req.Reason, h.logger)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidEventID):
+			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
 			})
-			return
+		case errors.Is(err, service.ErrInvalidAction):
+			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "invalid_action", Message: "action must be approve or reject"},
+			})
+		case errors.Is(err, service.ErrEventNotFound):
+			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+			})
+		default:
+			_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "internal_error", Message: "moderation failed"},
+			})
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "moderation failed"},
-		})
 		return
 	}
 
-	w.WriteHeader(http.StatusAccepted)
+	_ = httpx.WriteJSON(w, http.StatusOK, ModerateEventResponseDTO{
+		ModerationStatus: string(st),
+	})
 }
-

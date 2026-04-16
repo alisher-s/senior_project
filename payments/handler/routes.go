@@ -18,8 +18,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"log/slog"
 
-	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	"github.com/nu/student-event-ticketing-platform/internal/config"
+	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 	"github.com/nu/student-event-ticketing-platform/payments/model"
 	"github.com/nu/student-event-ticketing-platform/payments/repository"
@@ -59,6 +59,19 @@ type handler struct {
 	webhookSecret string
 }
 
+// @Summary Initiate a payment
+// @Tags payments
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token (student, organizer, or admin)"
+// @Param request body InitiatePaymentRequestDTO true "Payment request"
+// @Success 201 {object} InitiatePaymentResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 501 {object} httpx.ErrorResponse "Payments stub disabled (code: not_implemented)"
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /payments/initiate [post]
 func (h *handler) handleInitiate(w http.ResponseWriter, r *http.Request) {
 	var req InitiatePaymentRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
@@ -105,6 +118,21 @@ func (h *handler) handleInitiate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Payment provider webhook
+// @Description Verifies X-Signature (hex HMAC-SHA256 of raw body with PAYMENTS_WEBHOOK_SECRET). Not for browser clients.
+// @Tags payments
+// @Accept json
+// @Produce json
+// @Param X-Signature header string true "Hex-encoded HMAC-SHA256 of raw body"
+// @Param request body PaymentWebhookRequestDTO true "Webhook payload"
+// @Success 200 {object} object
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "missing_signature"
+// @Failure 403 {object} httpx.ErrorResponse "invalid_signature"
+// @Failure 404 {object} httpx.ErrorResponse
+// @Failure 501 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /payments/webhook [post]
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -184,4 +212,3 @@ func (h *handler) verifyWebhookSignature(body []byte, providedSigHex string) boo
 
 	return hmac.Equal(providedSig, expectedSig)
 }
-

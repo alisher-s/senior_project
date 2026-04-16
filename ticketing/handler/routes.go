@@ -19,10 +19,10 @@ import (
 )
 
 type Deps struct {
-	DB    *pgxpool.Pool
-	Redis *redis.Client
-	JWT   authx.JWT
-	Cfg   struct{}
+	DB     *pgxpool.Pool
+	Redis  *redis.Client
+	JWT    authx.JWT
+	Cfg    struct{}
 	Logger *slog.Logger
 }
 
@@ -47,16 +47,19 @@ type handler struct {
 }
 
 // @Summary Register a ticket for an event
+// @Description Requires student role. On success returns qr_png_base64 (PNG data URL–ready base64) and qr_hash_hex for check-in. 409 with code capacity_full or already_registered (and other business rules — see API error codes in README).
 // @Tags tickets
 // @Accept json
 // @Produce json
-// @Param Authorization header string true "Bearer access token"
+// @Param Authorization header string true "Bearer access token (student)"
 // @Param request body RegisterTicketRequestDTO true "Register ticket request"
 // @Success 201 {object} RegisterTicketResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
-// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "Invalid JWT"
+// @Failure 403 {object} httpx.ErrorResponse "Not a student (code: forbidden)"
 // @Failure 404 {object} httpx.ErrorResponse
-// @Failure 409 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse "capacity_full, already_registered, event_not_approved, …"
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /tickets/register [post]
 func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req RegisterTicketRequestDTO
@@ -90,12 +93,12 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, RegisterTicketResponseDTO{
-		TicketID:     ticket.ID.String(),
-		EventID:      ticket.EventID.String(),
-		UserID:       ticket.UserID.String(),
-		Status:       string(ticket.Status),
-		QRPNGBase64:  qrPNGBase64,
-		QRHashHex:    ticket.QRHashHex,
+		TicketID:    ticket.ID.String(),
+		EventID:     ticket.EventID.String(),
+		UserID:      ticket.UserID.String(),
+		Status:      string(ticket.Status),
+		QRPNGBase64: qrPNGBase64,
+		QRHashHex:   ticket.QRHashHex,
 	})
 }
 
@@ -103,13 +106,15 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 // @Tags tickets
 // @Accept json
 // @Produce json
-// @Param Authorization header string true "Bearer access token"
+// @Param Authorization header string true "Bearer access token (student)"
 // @Param id path string true "Ticket ID (UUID)"
 // @Success 200 {object} CancelTicketResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
 // @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
 // @Failure 409 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /tickets/{id}/cancel [post]
 func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
@@ -144,16 +149,19 @@ func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Mark ticket as used
+// @Description Check-in by QR hash; requires organizer or admin.
 // @Tags tickets
 // @Accept json
 // @Produce json
-// @Param Authorization header string true "Bearer access token"
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
 // @Param request body UseTicketRequestDTO true "Use ticket request"
 // @Success 200 {object} UseTicketResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
 // @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
 // @Failure 409 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /tickets/use [post]
 func (h *handler) handleUse(w http.ResponseWriter, r *http.Request) {
 	var req UseTicketRequestDTO
@@ -196,6 +204,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "event_not_published", Message: "event is not open for registration"},
 		})
+	case errors.Is(err, repository.ErrEventNotApproved), errors.Is(err, service.ErrEventNotApproved):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "event_not_approved", Message: "event is not approved for registration"},
+		})
 	case errors.Is(err, repository.ErrEventCancelled), errors.Is(err, service.ErrEventCancelled):
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "event_cancelled", Message: "event is cancelled"},
@@ -234,4 +246,3 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		})
 	}
 }
-

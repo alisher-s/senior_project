@@ -4,14 +4,14 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	"github.com/go-chi/chi/v5"
 	"log/slog"
 
-	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	"github.com/nu/student-event-ticketing-platform/internal/config"
+	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 
 	"github.com/nu/student-event-ticketing-platform/auth/repository"
@@ -31,9 +31,9 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	svc := service.New(deps.Cfg, userRepo, userRepo, deps.JWT)
 
 	h := &handler{
-		deps:  deps,
-		svc:   svc,
-		v:     validator.New(),
+		deps: deps,
+		svc:  svc,
+		v:    validator.New(),
 	}
 
 	r.Group(func(r chi.Router) {
@@ -58,7 +58,8 @@ type handler struct {
 // @Param request body RegisterRequestDTO true "Register request"
 // @Success 201 {object} AuthResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
-// @Failure 409 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse "email already registered (code: email_exists)"
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /auth/register [post]
 func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequestDTO
@@ -93,7 +94,8 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 // @Param request body LoginRequestDTO true "Login request"
 // @Success 200 {object} AuthResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
-// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "invalid_credentials"
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /auth/login [post]
 func (h *handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequestDTO
@@ -128,7 +130,8 @@ func (h *handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 // @Param request body RefreshRequestDTO true "Refresh request"
 // @Success 200 {object} AuthResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
-// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "invalid_refresh_token, refresh_token_consumed"
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /auth/refresh [post]
 func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequestDTO
@@ -184,4 +187,3 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		})
 	}
 }
-

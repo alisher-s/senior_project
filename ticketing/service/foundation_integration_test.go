@@ -63,8 +63,8 @@ func TestTicketCapacityRace(t *testing.T) {
 	eventID := uuid.New()
 	capacityTotal := 2
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
-		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published')
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, moderation_status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published', 'approved')
 	`, eventID, capacityTotal)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -191,8 +191,8 @@ func TestPaymentsWebhookIdempotentCancelsTicket(t *testing.T) {
 	eventID := uuid.New()
 	capacityTotal := 1
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
-		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published')
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, moderation_status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published', 'approved')
 	`, eventID, capacityTotal)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -264,8 +264,8 @@ func TestDoubleRegistrationReturnsConflict(t *testing.T) {
 
 	eventID := uuid.New()
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
-		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'published')
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, moderation_status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'published', 'approved')
 	`, eventID)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -299,8 +299,8 @@ func TestRegisterRejectedWhenEventCancelled(t *testing.T) {
 
 	eventID := uuid.New()
 	_, err = pool.Exec(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
-		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'cancelled')
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, moderation_status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', 5, 5, 'cancelled', 'approved')
 	`, eventID)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)

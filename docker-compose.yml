@@ -41,6 +41,8 @@ services:
     image: postgres:16-alpine
     ports:
       - "5432:5432"
+      # Secondary mapping for host `go test` when another Postgres already owns :5432.
+      - "5433:5432"
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: postgres

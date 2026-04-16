@@ -14,15 +14,17 @@ type EventRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (model.Event, error)
 	List(ctx context.Context, filter EventFilter) ([]model.Event, error)
 	Update(ctx context.Context, id uuid.UUID, patch EventPatch) (model.Event, error)
+	UpdateModeration(ctx context.Context, id uuid.UUID, st model.ModerationStatus, moderatedBy uuid.UUID) (model.Event, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 type EventFilter struct {
-	Query          string
-	StartsAfter    *time.Time
-	StartsBefore   *time.Time
-	Limit          int
-	Offset         int
+	Query                     string
+	StartsAfter               *time.Time
+	StartsBefore              *time.Time
+	RequireApprovedModeration bool
+	Limit                     int
+	Offset                    int
 }
 
 type EventPatch struct {

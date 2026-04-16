@@ -3,12 +3,51 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"log/slog"
 )
+
+var defaultCORSOrigins = []string{
+	"http://localhost:3000",
+	"http://localhost:5173",
+}
+
+// CORS allows browser requests from local dev frontends (React on :3000, Vite on :5173).
+// Allowed methods: GET, POST, PUT, DELETE, OPTIONS; headers: Content-Type, Authorization.
+func CORS() func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(defaultCORSOrigins))
+	for _, o := range defaultCORSOrigins {
+		allowed[o] = struct{}{}
+	}
+	const (
+		allowMethods = "GET, POST, PUT, DELETE, OPTIONS"
+		allowHeaders = "Content-Type, Authorization"
+	)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if origin != "" {
+				if _, ok := allowed[origin]; ok {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Add("Vary", "Origin")
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+			}
+			w.Header().Set("Access-Control-Allow-Methods", allowMethods)
+			w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 type ctxKey string
 

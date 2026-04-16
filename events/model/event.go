@@ -14,6 +14,15 @@ const (
 	EventStatusCancelled  EventStatus = "cancelled"
 )
 
+// ModerationStatus is admin review state (distinct from EventStatus lifecycle).
+type ModerationStatus string
+
+const (
+	ModerationPending  ModerationStatus = "pending"
+	ModerationApproved ModerationStatus = "approved"
+	ModerationRejected ModerationStatus = "rejected"
+)
+
 type Event struct {
 	ID                  uuid.UUID
 	Title               string
@@ -22,6 +31,9 @@ type Event struct {
 	CapacityTotal      int
 	CapacityAvailable  int
 	Status              EventStatus
+	ModerationStatus    ModerationStatus
+	ModeratedBy         *uuid.UUID
+	OrganizerID         *uuid.UUID
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }

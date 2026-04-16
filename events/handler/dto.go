@@ -25,6 +25,7 @@ type EventDTO struct {
 	CapacityTotal      int       `json:"capacity_total"`
 	CapacityAvailable  int       `json:"capacity_available"`
 	Status             string    `json:"status"`
+	ModerationStatus   string    `json:"moderation_status"`
 }
 
 type ListEventsResponseDTO struct {

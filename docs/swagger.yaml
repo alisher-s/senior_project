@@ -55,11 +55,48 @@ definitions:
         type: string
       id:
         type: string
+      moderation_status:
+        type: string
       starts_at:
         type: string
       status:
         type: string
       title:
+        type: string
+    type: object
+  handler.EventStatsResponseDTO:
+    properties:
+      as_of:
+        type: string
+      event_id:
+        type: string
+      revenue:
+        type: integer
+      tickets:
+        type: integer
+    type: object
+  handler.InitiatePaymentRequestDTO:
+    properties:
+      amount:
+        type: integer
+      currency:
+        maxLength: 3
+        minLength: 3
+        type: string
+      event_id:
+        type: string
+    required:
+    - amount
+    - currency
+    - event_id
+    type: object
+  handler.InitiatePaymentResponseDTO:
+    properties:
+      payment_id:
+        type: string
+      provider_ref:
+        type: string
+      provider_url:
         type: string
     type: object
   handler.ListEventsResponseDTO:
@@ -85,6 +122,34 @@ definitions:
     - email
     - password
     type: object
+  handler.ModerateEventRequestDTO:
+    properties:
+      action:
+        enum:
+        - approve
+        - reject
+        type: string
+      reason:
+        maxLength: 2000
+        type: string
+    required:
+    - action
+    type: object
+  handler.ModerateEventResponseDTO:
+    properties:
+      moderation_status:
+        type: string
+    type: object
+  handler.PaymentWebhookRequestDTO:
+    properties:
+      provider_ref:
+        type: string
+      status:
+        type: string
+    required:
+    - provider_ref
+    - status
+    type: object
   handler.RefreshRequestDTO:
     properties:
       refresh_token:
@@ -103,17 +168,6 @@ definitions:
     required:
     - email
     - password
-    type: object
-  handler.SetUserRoleRequestDTO:
-    properties:
-      role:
-        enum:
-        - student
-        - organizer
-        - admin
-        type: string
-    required:
-    - role
     type: object
   handler.RegisterTicketRequestDTO:
     properties:
@@ -136,6 +190,34 @@ definitions:
         type: string
       user_id:
         type: string
+    type: object
+  handler.SendEmailRequestDTO:
+    properties:
+      body:
+        maxLength: 5000
+        minLength: 1
+        type: string
+      title:
+        maxLength: 200
+        minLength: 3
+        type: string
+      to:
+        type: string
+    required:
+    - body
+    - title
+    - to
+    type: object
+  handler.SetUserRoleRequestDTO:
+    properties:
+      role:
+        enum:
+        - student
+        - organizer
+        - admin
+        type: string
+    required:
+    - role
     type: object
   handler.UpdateEventRequestDTO:
     properties:
@@ -177,7 +259,7 @@ definitions:
       user_id:
         type: string
     type: object
-  handler.UserRoleResponseDTO:
+  handler.UserDTO:
     properties:
       email:
         type: string
@@ -186,7 +268,7 @@ definitions:
       role:
         type: string
     type: object
-  handler.UserDTO:
+  handler.UserRoleResponseDTO:
     properties:
       email:
         type: string
@@ -210,10 +292,64 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: Modular monolith backend (Go + Chi).
+  description: Modular monolith backend (Go + Chi). HTTP handlers live in domain packages
+    (`auth/handler`, `events/handler`, …) and are mounted under `/api/v1` in `internal/app`.
+    See README for roles, RFC3339 dates, ticket QR fields, and the canonical list
+    of `error.code` values.
   title: Student Event Ticketing Platform API
   version: "0.1"
 paths:
+  /admin/events/{id}/moderate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token (admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: approve or reject
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ModerateEventRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ModerateEventResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Moderate event visibility (admin only)
+      tags:
+      - admin
   /admin/users/{id}/role:
     patch:
       consumes:
@@ -258,9 +394,51 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
       summary: Set user role (admin only)
       tags:
       - admin
+  /analytics/events/stats:
+    get:
+      consumes:
+      - application/json
+      description: Requires a valid JWT; any authenticated role may call. Optional
+        query event_id.
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Filter by event UUID
+        in: query
+        name: event_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.EventStatsResponseDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Event statistics (stub)
+      tags:
+      - analytics
   /auth/login:
     post:
       consumes:
@@ -284,7 +462,11 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: invalid_credentials
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Login and get tokens
@@ -313,7 +495,11 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: invalid_refresh_token, refresh_token_consumed
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Refresh access token using refresh token
@@ -342,7 +528,11 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "409":
-          description: Conflict
+          description: 'email already registered (code: email_exists)'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Register a new user
@@ -384,13 +574,24 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
       summary: List events
       tags:
       - events
     post:
       consumes:
       - application/json
+      description: Creates a draft/published event for the authenticated organizer
+        or admin. New events start with moderation_status pending until an admin approves.
       parameters:
+      - description: Bearer access token (organizer or admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Create event request
         in: body
         name: request
@@ -406,6 +607,19 @@ paths:
             $ref: '#/definitions/handler.EventDTO'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: 'Missing/invalid JWT (see code: missing_authorization, invalid_token,
+            …)'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: 'Authenticated but not organizer/admin (code: forbidden)'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Create an event
@@ -434,12 +648,18 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
       summary: Delete event by ID
       tags:
       - events
     get:
       consumes:
       - application/json
+      description: Public read. Only events with moderation_status=approved are returned;
+        otherwise 404 with code not_found.
       parameters:
       - description: Event ID (UUID)
         in: path
@@ -459,6 +679,10 @@ paths:
             $ref: '#/definitions/httpx.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Get event by ID
@@ -494,6 +718,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
       summary: Update event by ID
       tags:
       - events
@@ -511,12 +739,143 @@ paths:
       summary: Health check
       tags:
       - system
+  /notifications/send-email:
+    post:
+      consumes:
+      - application/json
+      description: No JWT required in current build. May return 501 if sending is
+        not wired.
+      parameters:
+      - description: Email payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.SendEmailRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted — enqueued
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Enqueue outbound email (foundation)
+      tags:
+      - notifications
+  /payments/initiate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token (student, organizer, or admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Payment request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.InitiatePaymentRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.InitiatePaymentResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "501":
+          description: 'Payments stub disabled (code: not_implemented)'
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Initiate a payment
+      tags:
+      - payments
+  /payments/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Verifies X-Signature (hex HMAC-SHA256 of raw body with PAYMENTS_WEBHOOK_SECRET).
+        Not for browser clients.
+      parameters:
+      - description: Hex-encoded HMAC-SHA256 of raw body
+        in: header
+        name: X-Signature
+        required: true
+        type: string
+      - description: Webhook payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.PaymentWebhookRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: missing_signature
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: invalid_signature
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Payment provider webhook
+      tags:
+      - payments
   /tickets/{id}/cancel:
     post:
       consumes:
       - application/json
       parameters:
-      - description: Bearer access token
+      - description: Bearer access token (student)
         in: header
         name: Authorization
         required: true
@@ -541,12 +900,20 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Cancel a ticket
@@ -556,8 +923,11 @@ paths:
     post:
       consumes:
       - application/json
+      description: Requires student role. On success returns qr_png_base64 (PNG data
+        URL–ready base64) and qr_hash_hex for check-in. 409 with code capacity_full
+        or already_registered (and other business rules — see API error codes in README).
       parameters:
-      - description: Bearer access token
+      - description: Bearer access token (student)
         in: header
         name: Authorization
         required: true
@@ -580,7 +950,11 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: Invalid JWT
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: 'Not a student (code: forbidden)'
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "404":
@@ -588,7 +962,11 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "409":
-          description: Conflict
+          description: capacity_full, already_registered, event_not_approved, …
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Register a ticket for an event
@@ -598,8 +976,9 @@ paths:
     post:
       consumes:
       - application/json
+      description: Check-in by QR hash; requires organizer or admin.
       parameters:
-      - description: Bearer access token
+      - description: Bearer access token (organizer or admin)
         in: header
         name: Authorization
         required: true
@@ -625,12 +1004,20 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Mark ticket as used

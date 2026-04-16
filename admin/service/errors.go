@@ -3,7 +3,9 @@ package service
 import "errors"
 
 var (
-	ErrNotImplemented = errors.New("not implemented")
-	ErrInvalidRole    = errors.New("invalid role")
+	ErrInvalidRole     = errors.New("invalid role")
+	ErrInvalidEventID  = errors.New("invalid event id")
+	ErrInvalidAction   = errors.New("invalid moderation action")
+	ErrEventNotFound   = errors.New("event not found")
 )
 

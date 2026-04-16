@@ -1,142 +1,207 @@
 # Student Event Ticketing Platform (NU) — backend
 
-Модульный монолит на Go: домены `auth`, `events`, `ticketing`, `payments`, `notifications`, `admin`, `analytics`. Этот документ описывает **текущее состояние API** для команды **мобильной разработки** и **фронтенда**.
+Модульный монолит на Go: домены `auth`, `events`, `ticketing`, `payments`, `notifications`, `admin`, `analytics`. Маршруты HTTP монтируются в **`internal/app/app.go`** под префиксом **`/api/v1`** (отдельного пакета `internal/api/v1` в репозитории нет; контракты описаны в Swagger и ниже).
 
 ---
 
-## Базовый URL и префикс API
+## Базовый URL, порты и префикс API
 
-| Окружение | Base URL |
-|-----------|----------|
-| Docker / локально (по умолчанию) | `http://localhost:8080` |
-| API | Все маршруты ниже — с префиксом **`/api/v1`** |
+| Сервис | Адрес (локально) | Примечание |
+|--------|------------------|------------|
+| HTTP API | `http://localhost:8080` | Префикс маршрутов: **`/api/v1`** |
+| PostgreSQL (Docker) | `localhost:5432` | Порт контейнера, проброшенный как `5432:5432` |
+| PostgreSQL (хост, для `go test` / psql) | `localhost:5433` | Доп. маппинг `5433:5432` в `docker-compose.yml`, если на машине уже занят `:5432` |
+| Redis | `localhost:6379` | Rate limiting |
 
-Пример: проверка живости сервиса — `GET /api/v1/healthz`.
+Пример: проверка живости — `GET /api/v1/healthz`.
 
 **Мобильное приложение на реальном устройстве:** подставьте IP вашей машины в локальной сети вместо `localhost` (например `http://192.168.1.10:8080`), при условии что API запущен и порт `8080` доступен с телефона.
 
-**Веб-фронтенд:** в репозитории **пока нет CORS middleware**. Запросы из браузера с другого origin могут блокироваться; типичные варианты: прокси в dev-сервере фронта или добавление CORS на бэкенде позже.
+**CORS:** для локальной разработки фронта разрешены origin `http://localhost:3000` и `http://localhost:5173` (см. `internal/infra/http/middleware.go`). Другие origin по-прежнему не проходят без доработки списка.
+
+---
+
+## Роли и права (MVP P2)
+
+| Роль | Назначение | Типовые операции |
+|------|------------|------------------|
+| **student** | Участник | `POST /auth/register`, `POST /auth/login`, просмотр **одобренных** событий, `POST /tickets/register`, отмена своего билета |
+| **organizer** | Организатор | То же, что student **плюс** создание событий (`POST /events`), сканирование QR / check-in (`POST /tickets/use`) |
+| **admin** | Администратор | То же, что organizer **плюс** модерация событий (`POST /admin/events/{id}/moderate`), смена ролей (`PATCH /admin/users/{id}/role`), доступ к заглушкам аналитики |
+
+Защита маршрутов: JWT в заголовке `Authorization: Bearer <access_token>`. **401 Unauthorized** — нет/битый токен (коды вроде `missing_authorization`, `invalid_token`). **403 Forbidden** — токен валиден, но роль не подходит (код `forbidden`).
+
+Публичная регистрация выдаёт только роль **`student`**. Учётки staff для dev: см. миграцию `006_dev_staff_users.sql` и раздел ниже.
 
 ---
 
 ## Аутентификация
 
-- **Тип:** JWT — в заголовке `Authorization: Bearer <access_token>`.
-- **Пара access / refresh:** после `register` / `login` приходят `access_token` и `refresh_token`; access используется для защищённых методов, refresh — для `POST /api/v1/auth/refresh` (тело: `{"refresh_token":"..."}`).
-- **TTL (по умолчанию):** access — 15 минут, refresh — 30 суток (см. `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL` в `config/.env.example`).
-- **Регистрация:** `POST /api/v1/auth/register` принимает только email в домене из `AUTH_NU_EMAIL_DOMAIN` (по умолчанию `nu.edu.kz`). Новым пользователям назначается роль **`student`**.
-- **Роли в токене:** строки `student`, `organizer`, `admin` (см. контракт ответа `user.role`).
+- **Тип:** JWT — `Authorization: Bearer <access_token>`.
+- **Пара access / refresh:** после `register` / `login` приходят `access_token` и `refresh_token`; refresh — для `POST /api/v1/auth/refresh` (тело: `{"refresh_token":"..."}`).
+- **TTL (по умолчанию):** access — 15 минут, refresh — 30 суток (`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL` в `config/.env.example`).
+- **Регистрация:** `POST /api/v1/auth/register` — email в домене `AUTH_NU_EMAIL_DOMAIN` (по умолчанию `nu.edu.kz`). Новым пользователям назначается роль **`student`**.
+- **Роли в токене:** строки `student`, `organizer`, `admin` (см. `user.role` в ответе auth).
 
 **Как получить `organizer` / `admin` (не через register):**
 
-1. **Сид в миграциях (локально / CI):** файл `docker/postgres/migrations/006_dev_staff_users.sql` создаёт учётки `staff.organizer@nu.edu.kz` и `staff.admin@nu.edu.kz` с паролем **`DevStaffPass1!`** (общий для обоих). Миграции выполняются при **первом** создании тома Postgres; при уже существующей БД — пересоздайте том или примените SQL вручную.
-2. **Админский API:** `PATCH /api/v1/admin/users/{id}/role` с телом `{"role":"organizer"}` или `"admin"` / `"student"`. Доступен только с JWT роли **`admin`**. После смены роли у пользователя **отзываются все refresh-токены** — нужен повторный `login` / `refresh` уже с новой ролью.
-
-Публичная регистрация **никогда** не выдаёт `organizer`/`admin` — это сделано намеренно.
+1. **Сид в миграциях:** `docker/postgres/migrations/006_dev_staff_users.sql` — `staff.organizer@nu.edu.kz`, `staff.admin@nu.edu.kz`, пароль **`DevStaffPass1!`**.
+2. **Админский API:** `PATCH /api/v1/admin/users/{id}/role` с телом `{"role":"organizer"|"admin"|"student"}`. После смены роли **отзываются все refresh-токены** — нужен повторный `login`.
 
 ---
 
-## Формат тел запросов и ошибок
+## Формат тел запросов, дат и ошибок
 
-- Тело запросов: **`Content-Type: application/json`**. Неизвестные поля JSON в ряде хендлеров отклоняются (`DisallowUnknownFields`).
-- Даты событий: **`starts_at`** в формате **RFC3339** (пример: `2026-01-01T10:00:00Z`).
-- Успешные ответы — JSON с полями, описанными в таблице ниже или в Swagger.
-- Ошибки — JSON вида:
+- Тело запросов: **`Content-Type: application/json`**. Неизвестные поля JSON в ряде хендлеров отклоняются (`DisallowUnknownFields` / общий декодер).
+- **Даты событий:** поле **`starts_at`** в формате **RFC3339** (например `2026-01-01T10:00:00Z`).
+- Успешные ответы — JSON; структуры полей см. Swagger (`/api/v1/swagger/index.html`).
+
+### Стандартное тело ошибки
 
 ```json
 {
   "error": {
-    "code": "invalid_request",
-    "message": "..."
+    "code": "string",
+    "message": "string"
   }
 }
 ```
+
+### HTTP-статусы и типичные `error.code`
+
+| HTTP | Когда | Примеры `error.code` |
+|------|--------|----------------------|
+| **400** | Невалидное тело/параметры | `invalid_request`, `invalid_id`, `email_not_allowed`, `invalid_role`, `invalid_action` |
+| **401** | Нет или неверный JWT / подпись webhook | `missing_authorization`, `invalid_token`, `invalid_credentials`, `invalid_refresh_token`, `missing_signature`, … |
+| **403** | JWT ок, роль не разрешена; неверная подпись webhook | `forbidden`, `invalid_signature` |
+| **404** | Сущность не найдена (в т.ч. скрытые неодобренные события для публичного GET) | `not_found`, `ticket_not_found` |
+| **409** | Конфликт бизнес-правил (билеты, вместимость) | `already_registered`, `capacity_full`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, `ticket_already_used`, … |
+| **429** | Rate limit | `rate_limited` |
+| **501** | Функция ещё не реализована | `not_implemented` |
+| **500** | Внутренняя ошибка | `internal_error` |
+
+### Справочник `error.code` (текущая реализация)
+
+**Auth:** `invalid_request`, `email_not_allowed`, `email_exists`, `invalid_credentials`, `invalid_refresh_token`, `refresh_token_consumed`, `internal_error`.
+
+**JWT / RBAC (middleware):** `missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims`, `missing_role`, `forbidden`.
+
+**Общие:** `unauthorized`, `invalid_id`, `not_found`, `invalid_request`, `invalid_role`, `invalid_action`, `internal_error`, `not_implemented`, `rate_limited`.
+
+**Билеты:** `capacity_full`, `already_registered`, `event_not_published`, `event_not_approved`, `event_cancelled`, `registration_closed`, `cancellation_not_allowed`, `check_in_not_open`, `ticket_not_found`, `ticket_already_cancelled`, `ticket_already_used`, `ticket_cannot_be_used`.
+
+**Платежи (webhook):** `missing_signature`, `invalid_signature`.
+
+---
+
+## Регистрация билета: ответ
+
+`POST /api/v1/tickets/register` (роль **student**), тело: `{"event_id":"<uuid>"}`.
+
+Успешный ответ **201** включает:
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `ticket_id` | string | UUID билета |
+| `event_id` | string | UUID события |
+| `user_id` | string | UUID пользователя |
+| `status` | string | Статус билета |
+| **`qr_hash_hex`** | string | Хеш для check-in (`POST /tickets/use`) |
+| **`qr_png_base64`** | string | PNG QR в Base64 (для отображения в приложении) |
+
+Повторная регистрация на то же событие тем же пользователем: ожидайте **409** с `code: already_registered` (см. smoke-тесты в `agents.md`).
 
 ---
 
 ## Таблица эндпоинтов
 
-Все пути относительно `https://<host>/api/v1`.
+Все пути относительно `http://<host>:8080/api/v1`.
 
 | Метод | Путь | Auth | Роль | Назначение |
 |--------|------|------|------|------------|
 | GET | `/healthz` | Нет | — | Health check |
-| GET | `/swagger/*` | Нет | — | Swagger UI (удобно для согласования контрактов) |
-| POST | `/auth/register` | Нет | — | Регистрация (`email`, `password` ≥ 8 символов, домен NU) |
+| GET | `/swagger/*` | Нет | — | Swagger UI |
+| POST | `/auth/register` | Нет | — | Регистрация (`email`, `password` ≥ 8, домен NU) |
 | POST | `/auth/login` | Нет | — | Вход |
 | POST | `/auth/refresh` | Нет | — | Обновление пары токенов |
-| POST | `/events/` | Нет | — | Создание события (`title`, `description`, `starts_at`, `capacity_total`) |
-| GET | `/events/` | Нет | — | Список; query: `limit`, `offset`, `q`, `starts_after`, `starts_before` |
-| GET | `/events/{id}` | Нет | — | Карточка события |
-| PUT | `/events/{id}` | Нет | — | Обновление (опционально `status`: `draft` / `published` / `cancelled`) |
+| POST | `/events/` | Bearer | `organizer`, `admin` | Создание события; стартовая **модерация** — `pending` |
+| GET | `/events/` | Нет | — | Список **только одобренных** (`moderation_status=approved`); query: `limit`, `offset`, `q`, `starts_after`, `starts_before` |
+| GET | `/events/{id}` | Нет | — | Карточка **только для одобренного** события; иначе 404 |
+| PUT | `/events/{id}` | Нет | — | Обновление (в т.ч. `status`: `draft` / `published` / `cancelled`) |
 | DELETE | `/events/{id}` | Нет | — | Удаление |
-| POST | `/tickets/register` | Bearer | `student` | Регистрация на событие (`event_id`); ответ содержит `qr_png_base64`, `qr_hash_hex` |
+| POST | `/tickets/register` | Bearer | `student` | Регистрация; см. поля QR выше |
 | POST | `/tickets/{id}/cancel` | Bearer | `student` | Отмена своего билета |
-| POST | `/tickets/use` | Bearer | `organizer` или `admin` | Отметка входа по `qr_hash_hex` в теле |
-| POST | `/payments/initiate` | Bearer | `student`, `organizer` или `admin` | Старт оплаты (`event_id`, `amount`, `currency` — 3 буквы) |
-| POST | `/payments/webhook` | Нет (подпись) | — | Webhook провайдера: заголовок **`X-Signature`** — hex HMAC-SHA256 от **сырого** тела; секрет `PAYMENTS_WEBHOOK_SECRET`. Для мобилки/веба обычно не вызывается |
-| POST | `/notifications/send-email` | Нет | — | Постановка письма в очередь (`to`, `title`, `body`); см. статус модуля ниже |
-| GET | `/analytics/events/stats` | Bearer | Любая роль из токена | Статистика; query `event_id` опционален |
-| PATCH | `/admin/users/{id}/role` | Bearer | `admin` | Назначение роли пользователю (`{"role":"student"|"organizer"|"admin"}`) |
-| POST | `/admin/events/{id}/moderate` | Bearer | `admin` | Модерация события (`action` в теле) |
+| POST | `/tickets/use` | Bearer | `organizer`, `admin` | Вход по `qr_hash_hex` |
+| POST | `/payments/initiate` | Bearer | `student`, `organizer`, `admin` | Старт оплаты (`event_id`, `amount`, `currency` — 3 буквы) |
+| POST | `/payments/webhook` | Подпись `X-Signature` | — | Webhook провайдера (не для браузера) |
+| POST | `/notifications/send-email` | Нет | — | Постановка письма в очередь (`to`, `title`, `body`) |
+| GET | `/analytics/events/stats` | Bearer | Любая роль | Статистика (пока может быть **501**); query `event_id` опционален |
+| PATCH | `/admin/users/{id}/role` | Bearer | `admin` | Назначение роли |
+| POST | `/admin/events/{id}/moderate` | Bearer | `admin` | Модерация: тело `{"action":"approve"|"reject","reason":"..."}`; ответ `moderation_status` |
 
-Ответы регистрации/логина (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
+Ответы `register` / `login` / `refresh` (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
+
+Событие в JSON содержит **`moderation_status`**: `pending` | `approved` | `rejected`.
 
 ---
 
 ## Swagger
 
-После запуска API: откройте в браузере **`/api/v1/swagger/index.html`** (например `http://localhost:8080/api/v1/swagger/index.html`). Спецификация: `doc.json` по пути Swagger.
+После запуска API: **`/api/v1/swagger/index.html`**. Перегенерация из корня репозитория:
+
+```bash
+$(go env GOPATH)/bin/swag init -g cmd/api/main.go -o docs
+```
 
 ---
 
-## Ограничение частоты запросов (rate limit)
+## Rate limit
 
-Используется Redis. Параметры по умолчанию: **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_WINDOW_SECONDS=60`** (см. `docker-compose.yml` / `.env.example`). При превышении клиент получит ошибку со стороны middleware.
+Redis: по умолчанию **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_WINDOW_SECONDS=60`**. При превышении — **429** и `code: rate_limited` (заголовок `Retry-After`).
 
 ---
 
-## Состояние модулей (что ожидать при интеграции)
+## Состояние модулей (ожидания для клиентов)
 
-| Модуль | Статус для клиентов |
-|--------|---------------------|
-| **auth** | Рабочий сценарий: register / login / refresh, JWT |
-| **events** | CRUD без авторизации (все могут создавать/менять — текущая модель «foundation») |
-| **ticketing** | Регистрация, QR, отмена; скан — только `organizer`/`admin` |
-| **payments** | Инициация и webhook заложены; провайдер и продуктовая логика могут быть упрощены — уточняйте у бэкенда перед продакшен-сценарием |
-| **notifications** | Очередь и worker есть; HTTP `send-email` может отвечать **501 Not Implemented**, если отправка ещё не подключена — смотрите тело ошибки |
-| **admin** | Смена роли пользователя (`PATCH .../users/{id}/role`); модерация событий — заглушка (может отвечать **501**) |
-| **analytics** | Может отвечать **501**, пока аналитика не реализована |
+| Модуль | Статус |
+|--------|--------|
+| **auth** | Register / login / refresh, JWT |
+| **events** | CRUD; создание только organizer/admin; публичный список и GET — только **одобренные** события; модерация через admin API |
+| **ticketing** | Регистрация, QR, отмена; check-in — organizer/admin |
+| **payments** | Заглушка; возможны **501** |
+| **notifications** | Очередь и worker; HTTP может отвечать **501** |
+| **admin** | Смена ролей и **модерация событий** |
+| **analytics** | Пока **501** |
 
 ---
 
 ## Запуск локально
 
-### Docker (рекомендуется)
+### Docker (рекомендуется, в том числе для фронтенда)
+
+Из корня репозитория:
 
 ```bash
 docker compose up --build
 ```
 
-При **первом** старте PostgreSQL выполняются SQL-файлы из **`docker/postgres/migrations/`** (смонтированы в `docker-entrypoint-initdb.d`). Redis поднимается для rate limiting.
+Поднимутся **api** (`:8080`), **postgres** (`:5432` и **`:5433`** на хосте), **redis**. При **первом** создании тома Postgres выполняются миграции из `docker/postgres/migrations/`.
 
-Секреты для разработки заданы в `docker-compose.yml`; для продакшена их нужно переопределять.
+Для фронтенда обычно достаточно поднять весь стек и в `.env` фронта указать `VITE_API_URL=http://localhost:8080` (или аналог) с путями к `/api/v1/...`. Убедитесь, что origin dev-сервера — `localhost:3000` или `localhost:5173`, либо добавьте свой origin в CORS на бэкенде.
 
 ### Только Go (нужны Postgres и Redis)
 
-Скопируйте `config/.env.example` в `.env` в корне или экспортируйте переменные, затем:
+Если используете Postgres с хоста на порту **5433**, задайте `POSTGRES_PORT=5433` (и хост `localhost`) в `.env`. Скопируйте `config/.env.example` в `.env`, затем:
 
 ```bash
 go run ./cmd/api
 ```
 
-Обязательные переменные (вне `development`): как минимум `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `PAYMENTS_WEBHOOK_SECRET` — см. `internal/config/config.go`.
-
 ---
 
 ## Быстрые проверки (curl)
 
-Регистрация:
+Регистрация студента:
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/auth/register \
@@ -152,24 +217,34 @@ curl -sS -X POST http://localhost:8080/api/v1/auth/login \
   -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
 ```
 
-Создание события:
+Создание события (нужен токен **organizer** или **admin**):
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/json" \
-  -d '{"title":"NU Hackathon","description":"test event","starts_at":"2026-01-01T10:00:00Z","capacity_total":1}'
+  -H "Authorization: Bearer <organizer_or_admin_access_token>" \
+  -d '{"title":"NU Hackathon","description":"test event","starts_at":"2026-01-01T10:00:00Z","capacity_total":100}'
 ```
 
-Регистрация билета (подставьте токен и `event_id`):
+Одобрение события админом:
+
+```bash
+curl -sS -X POST "http://localhost:8080/api/v1/admin/events/<event_uuid>/moderate" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{"action":"approve"}'
+```
+
+Регистрация билета:
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/tickets/register \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <access_token>" \
+  -H "Authorization: Bearer <student_access_token>" \
   -d '{"event_id":"<uuid>"}'
 ```
 
-Вход как staff-организатор (после применения миграции `006_dev_staff_users.sql`) и отметка входа по QR:
+Вход как staff-организатор и отметка по QR:
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/auth/login \
@@ -182,22 +257,13 @@ curl -sS -X POST http://localhost:8080/api/v1/tickets/use \
   -d '{"qr_hash_hex":"<hex_from_register_response>"}'
 ```
 
-Назначить пользователю роль `organizer` (нужен токен **admin** — например `staff.admin@nu.edu.kz`):
-
-```bash
-curl -sS -X PATCH "http://localhost:8080/api/v1/admin/users/<user_uuid>/role" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <admin_access_token>" \
-  -d '{"role":"organizer"}'
-```
-
 ---
 
 ## Стек (кратко)
 
 - Go 1.22+
 - PostgreSQL, Redis
-- Chi, JWT (access + refresh в БД, одноразовый refresh)
+- Chi, JWT (access + refresh в БД)
 - Swagger (swag)
 
-Вопросы по контрактам лучше согласовывать через **Swagger** и этот файл; при изменении маршрутов обновляйте аннотации и перегенерацию `docs/`.
+Вопросы по контрактам — через **Swagger** и этот файл; при изменении маршрутов обновляйте аннотации и команду `swag init` выше.

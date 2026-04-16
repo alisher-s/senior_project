@@ -7,6 +7,7 @@ var (
 	ErrCapacityFull      = errors.New("event capacity full")
 	ErrAlreadyRegistered = errors.New("already registered")
 	ErrEventNotPublished = errors.New("event is not published")
+	ErrEventNotApproved  = errors.New("event is not approved for listing")
 	ErrEventCancelled    = errors.New("event is cancelled")
 	// ErrEventRegistrationClosed is returned when registration is attempted at/after event start.
 	ErrEventRegistrationClosed = errors.New("event registration is closed")

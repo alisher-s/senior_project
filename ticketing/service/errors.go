@@ -7,6 +7,7 @@ var (
 	ErrCapacityFull      = errors.New("capacity full")
 	ErrAlreadyRegistered = errors.New("already registered")
 	ErrEventNotPublished = errors.New("event is not published")
+	ErrEventNotApproved  = errors.New("event is not approved for registration")
 	ErrEventCancelled    = errors.New("event is cancelled")
 	ErrEventRegistrationClosed = errors.New("event registration is closed")
 	ErrCancellationNotAllowed = errors.New("ticket cannot be cancelled after event start")

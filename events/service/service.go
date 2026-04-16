@@ -18,7 +18,8 @@ func New(repo repository.EventRepository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) Create(ctx context.Context, title, description string, startsAt time.Time, capacityTotal int) (model.Event, error) {
+func (s *Service) Create(ctx context.Context, title, description string, startsAt time.Time, capacityTotal int, organizerID uuid.UUID) (model.Event, error) {
+	org := organizerID
 	e := model.Event{
 		Title:              title,
 		Description:       description,
@@ -26,6 +27,7 @@ func (s *Service) Create(ctx context.Context, title, description string, startsA
 		CapacityTotal:     capacityTotal,
 		CapacityAvailable: capacityTotal,
 		Status:            model.EventStatusPublished,
+		OrganizerID:       &org,
 	}
 	ev, err := s.repo.Create(ctx, e)
 	if err != nil {

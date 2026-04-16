@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nu/student-event-ticketing-platform/events/model"
@@ -21,42 +22,26 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{pool: pool}
 }
 
-func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, error) {
-	id := uuid.New()
-	var created model.Event
-	st := e.Status
-	if st == "" {
-		st = model.EventStatusPublished
+func uuidPtrFromPG(u pgtype.UUID) *uuid.UUID {
+	if !u.Valid {
+		return nil
 	}
-	err := p.pool.QueryRow(ctx, `
-		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
-	`, id, e.Title, e.Description, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st).
-		Scan(
-			&created.ID,
-			&created.Title,
-			&created.Description,
-			&created.StartsAt,
-			&created.CapacityTotal,
-			&created.CapacityAvailable,
-			&created.Status,
-			&created.CreatedAt,
-			&created.UpdatedAt,
-		)
+	id, err := uuid.FromBytes(u.Bytes[:])
 	if err != nil {
-		return model.Event{}, err
+		return nil
 	}
-	return created, nil
+	return &id
 }
 
-func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanEventRow(row rowScanner) (model.Event, error) {
 	var e model.Event
-	err := p.pool.QueryRow(ctx, `
-		SELECT id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
-		FROM events
-		WHERE id = $1
-	`, id).Scan(
+	var modBy pgtype.UUID
+	var orgID pgtype.UUID
+	err := row.Scan(
 		&e.ID,
 		&e.Title,
 		&e.Description,
@@ -64,9 +49,51 @@ func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, erro
 		&e.CapacityTotal,
 		&e.CapacityAvailable,
 		&e.Status,
+		&e.ModerationStatus,
+		&modBy,
+		&orgID,
 		&e.CreatedAt,
 		&e.UpdatedAt,
 	)
+	if err != nil {
+		return model.Event{}, err
+	}
+	e.ModeratedBy = uuidPtrFromPG(modBy)
+	e.OrganizerID = uuidPtrFromPG(orgID)
+	return e, nil
+}
+
+func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, error) {
+	id := uuid.New()
+	st := e.Status
+	if st == "" {
+		st = model.EventStatusPublished
+	}
+	var orgID any
+	if e.OrganizerID != nil {
+		orgID = *e.OrganizerID
+	}
+	row := p.pool.QueryRow(ctx, `
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, organizer_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status,
+			moderation_status, moderated_by, organizer_id, created_at, updated_at
+	`, id, e.Title, e.Description, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st, orgID)
+	created, err := scanEventRow(row)
+	if err != nil {
+		return model.Event{}, err
+	}
+	return created, nil
+}
+
+func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
+	row := p.pool.QueryRow(ctx, `
+		SELECT id, title, description, starts_at, capacity_total, capacity_available, status,
+			moderation_status, moderated_by, organizer_id, created_at, updated_at
+		FROM events
+		WHERE id = $1
+	`, id)
+	e, err := scanEventRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Event{}, ErrNotFound
@@ -88,6 +115,9 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 	args := []any{}
 	argPos := 1
 
+	if filter.RequireApprovedModeration {
+		where = append(where, "moderation_status = 'approved'")
+	}
 	if strings.TrimSpace(filter.Query) != "" {
 		where = append(where, fmt.Sprintf("title ILIKE $%d", argPos))
 		args = append(args, "%"+strings.TrimSpace(filter.Query)+"%")
@@ -105,7 +135,8 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
+		SELECT id, title, description, starts_at, capacity_total, capacity_available, status,
+			moderation_status, moderated_by, organizer_id, created_at, updated_at
 		FROM events
 		WHERE %s
 		ORDER BY starts_at DESC
@@ -121,18 +152,8 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 
 	var out []model.Event
 	for rows.Next() {
-		var e model.Event
-		if err := rows.Scan(
-			&e.ID,
-			&e.Title,
-			&e.Description,
-			&e.StartsAt,
-			&e.CapacityTotal,
-			&e.CapacityAvailable,
-			&e.Status,
-			&e.CreatedAt,
-			&e.UpdatedAt,
-		); err != nil {
+		e, err := scanEventRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -165,9 +186,6 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		argPos++
 	}
 	if patch.CapacityTotal != nil {
-		// Recalculate availability based on actual tickets occupying the seats.
-		// Available = capacity_total - COUNT(active + used).
-		// Cancelled tickets do not occupy capacity.
 		patchVal := *patch.CapacityTotal
 		patchValPos := argPos
 		set = append(set, fmt.Sprintf("capacity_total = $%d", patchValPos))
@@ -196,21 +214,30 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		UPDATE events
 		SET %s, updated_at = NOW()
 		WHERE id = $%d
-		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status, created_at, updated_at
+		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status,
+			moderation_status, moderated_by, organizer_id, created_at, updated_at
 	`, strings.Join(set, ", "), argPos)
 
-	var e model.Event
-	err := p.pool.QueryRow(ctx, query, args...).Scan(
-		&e.ID,
-		&e.Title,
-		&e.Description,
-		&e.StartsAt,
-		&e.CapacityTotal,
-		&e.CapacityAvailable,
-		&e.Status,
-		&e.CreatedAt,
-		&e.UpdatedAt,
-	)
+	row := p.pool.QueryRow(ctx, query, args...)
+	e, err := scanEventRow(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Event{}, ErrNotFound
+		}
+		return model.Event{}, err
+	}
+	return e, nil
+}
+
+func (p *Postgres) UpdateModeration(ctx context.Context, id uuid.UUID, st model.ModerationStatus, moderatedBy uuid.UUID) (model.Event, error) {
+	row := p.pool.QueryRow(ctx, `
+		UPDATE events
+		SET moderation_status = $2, moderated_by = $3, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, title, description, starts_at, capacity_total, capacity_available, status,
+			moderation_status, moderated_by, organizer_id, created_at, updated_at
+	`, id, string(st), moderatedBy)
+	e, err := scanEventRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Event{}, ErrNotFound
@@ -230,4 +257,3 @@ func (p *Postgres) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
-

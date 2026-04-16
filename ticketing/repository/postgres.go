@@ -37,12 +37,13 @@ func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID
 	var startsAt time.Time
 	var evStatus string
 	var capAvail int
+	var modStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT starts_at, status, capacity_available
+		SELECT starts_at, status, capacity_available, moderation_status
 		FROM events
 		WHERE id = $1
 		FOR UPDATE
-	`, eventID).Scan(&startsAt, &evStatus, &capAvail)
+	`, eventID).Scan(&startsAt, &evStatus, &capAvail, &modStatus)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Ticket{}, ErrEventNotFound
@@ -56,6 +57,10 @@ func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID
 		return model.Ticket{}, ErrEventCancelled
 	default:
 		return model.Ticket{}, ErrEventNotPublished
+	}
+
+	if modStatus != "approved" {
+		return model.Ticket{}, ErrEventNotApproved
 	}
 
 	if !startsAt.After(now) {

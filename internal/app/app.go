@@ -38,12 +38,13 @@ type Deps struct {
 	Logger *slog.Logger
 }
 
-func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger) http.Handler {
+func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger, workerCtx context.Context) http.Handler {
 	// Chi chosen for a lightweight router with composable middleware and clean routing patterns.
 	r := chi.NewRouter()
 
 	// Standard middleware chain for production readiness.
 	r.Use(middleware.RequestID)
+	r.Use(httpx.CORS())
 	r.Use(middleware.RealIP)
 	r.Use(httpx.SecurityHeaders())
 	r.Use(httpx.Logging(logger))
@@ -53,11 +54,10 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 	// Redis-based rate limiting.
 	r.Use(rate_limit.Middleware(rdb, cfg))
 
-	// Notifications worker bootstrap (DB-backed queue).
-	// Uses context.Background() for foundation simplicity; proper graceful shutdown can be added later.
+	// Notifications worker bootstrap (DB-backed queue); workerCtx is cancelled during API shutdown.
 	notificationsQueueRepo := notificationsRepo.NewPostgres(db)
 	notificationsWorker := notificationsService.NewEmailWorker(logger, notificationsQueueRepo, 20, 2*time.Second)
-	go notificationsWorker.Start(context.Background())
+	go notificationsWorker.Start(workerCtx)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		swaggerDocURL := fmt.Sprintf("http://localhost%s/api/v1/swagger/doc.json", cfg.Server.Address)
@@ -79,7 +79,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 		})
 
 		// Events CRUD.
-		eventsHandler.RegisterRoutes(r, eventsHandler.Deps{DB: db})
+		eventsHandler.RegisterRoutes(r, eventsHandler.Deps{DB: db, JWT: jwt})
 
 		// Ticketing registration (capacity-safe + QR generation).
 		ticketingHandler.RegisterRoutes(r, ticketingHandler.Deps{

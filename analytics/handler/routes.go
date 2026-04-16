@@ -11,9 +11,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"log/slog"
 
+	"github.com/nu/student-event-ticketing-platform/analytics/service"
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
-	"github.com/nu/student-event-ticketing-platform/analytics/service"
 )
 
 type Deps struct {
@@ -39,6 +39,18 @@ type handler struct {
 	v   *validator.Validate
 }
 
+// @Summary Event statistics (stub)
+// @Description Requires a valid JWT; any authenticated role may call. Optional query event_id.
+// @Tags analytics
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Param event_id query string false "Filter by event UUID"
+// @Success 200 {object} EventStatsResponseDTO
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 501 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /analytics/events/stats [get]
 func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 	eventIDParam := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	var eventID *string
@@ -62,4 +74,3 @@ func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 
 	_ = httpx.WriteJSON(w, http.StatusOK, stats)
 }
-

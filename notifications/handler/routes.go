@@ -11,8 +11,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"log/slog"
 
-	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
+	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 	notificationsModel "github.com/nu/student-event-ticketing-platform/notifications/model"
 	notificationsRepo "github.com/nu/student-event-ticketing-platform/notifications/repository"
 	notificationsService "github.com/nu/student-event-ticketing-platform/notifications/service"
@@ -47,6 +47,17 @@ type SendEmailRequestDTO struct {
 	Body  string `json:"body" validate:"required,min=1,max=5000"`
 }
 
+// @Summary Enqueue outbound email (foundation)
+// @Description No JWT required in current build. May return 501 if sending is not wired.
+// @Tags notifications
+// @Accept json
+// @Produce json
+// @Param request body SendEmailRequestDTO true "Email payload"
+// @Success 202 "Accepted — enqueued"
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 501 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /notifications/send-email [post]
 func (h *handler) handleSendEmail(w http.ResponseWriter, r *http.Request) {
 	var req SendEmailRequestDTO
 	dec := json.NewDecoder(r.Body)
@@ -86,4 +97,3 @@ func (h *handler) handleSendEmail(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 }
-

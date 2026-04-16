@@ -11,14 +11,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 	"github.com/nu/student-event-ticketing-platform/events/model"
 	"github.com/nu/student-event-ticketing-platform/events/repository"
 	"github.com/nu/student-event-ticketing-platform/events/service"
+	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
+	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 )
 
 type Deps struct {
-	DB *pgxpool.Pool
+	DB  *pgxpool.Pool
+	JWT authx.JWT
 }
 
 func RegisterRoutes(r chi.Router, deps Deps) {
@@ -28,7 +30,7 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	h := &handler{repo: repo, svc: svc, v: validator.New()}
 
 	r.Route("/events", func(r chi.Router) {
-		r.Post("/", h.handleCreate)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/", h.handleCreate)
 		r.Get("/", h.handleList)
 		r.Get("/{id}", h.handleGetByID)
 		r.Put("/{id}", h.handleUpdate)
@@ -43,12 +45,17 @@ type handler struct {
 }
 
 // @Summary Create an event
+// @Description Creates a draft/published event for the authenticated organizer or admin. New events start with moderation_status pending until an admin approves.
 // @Tags events
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
 // @Param request body CreateEventRequestDTO true "Create event request"
 // @Success 201 {object} EventDTO
 // @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "Missing/invalid JWT (see code: missing_authorization, invalid_token, …)"
+// @Failure 403 {object} httpx.ErrorResponse "Authenticated but not organizer/admin (code: forbidden)"
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /events [post]
 func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var req CreateEventRequestDTO
@@ -59,7 +66,15 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.StartsAt, req.CapacityTotal)
+	organizerID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.StartsAt, req.CapacityTotal, organizerID)
 	if err != nil {
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to create event"},
@@ -75,6 +90,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
 		Status:            string(ev.Status),
+		ModerationStatus:  string(ev.ModerationStatus),
 	})
 }
 
@@ -89,6 +105,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 // @Param starts_before query string false "Filter starts_before (RFC3339)"
 // @Success 200 {object} ListEventsResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /events [get]
 func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
@@ -140,11 +157,12 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := repository.EventFilter{
-		Query:         q,
-		StartsAfter:   startsAfter,
-		StartsBefore:  startsBefore,
-		Limit:         limit,
-		Offset:        offset,
+		Query:                     q,
+		StartsAfter:               startsAfter,
+		StartsBefore:              startsBefore,
+		RequireApprovedModeration: true,
+		Limit:                     limit,
+		Offset:                    offset,
 	}
 
 	items, err := h.svc.List(r.Context(), filter)
@@ -165,6 +183,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 			CapacityTotal:     ev.CapacityTotal,
 			CapacityAvailable: ev.CapacityAvailable,
 			Status:            string(ev.Status),
+			ModerationStatus:  string(ev.ModerationStatus),
 		})
 	}
 
@@ -176,6 +195,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Get event by ID
+// @Description Public read. Only events with moderation_status=approved are returned; otherwise 404 with code not_found.
 // @Tags events
 // @Accept json
 // @Produce json
@@ -183,6 +203,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} EventDTO
 // @Failure 400 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /events/{id} [get]
 func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
@@ -208,6 +229,13 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ev.ModerationStatus != model.ModerationApproved {
+		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+		})
+		return
+	}
+
 	_ = httpx.WriteJSON(w, http.StatusOK, EventDTO{
 		ID:                ev.ID.String(),
 		Title:             ev.Title,
@@ -216,6 +244,7 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
 		Status:            string(ev.Status),
+		ModerationStatus:  string(ev.ModerationStatus),
 	})
 }
 
@@ -228,6 +257,7 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} EventDTO
 // @Failure 400 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /events/{id} [put]
 func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
@@ -275,6 +305,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
 		Status:            string(ev.Status),
+		ModerationStatus:  string(ev.ModerationStatus),
 	})
 }
 
@@ -286,6 +317,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // @Success 204 "No Content"
 // @Failure 400 {object} httpx.ErrorResponse
 // @Failure 404 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
 // @Router /events/{id} [delete]
 func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
@@ -312,4 +344,3 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
-
