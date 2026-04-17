@@ -2,8 +2,8 @@
 *.env
 /bin/
 /dist/
-api
-./api
+# Root-only: ignore local binary named `api`, not `cmd/api/` (entrypoint).
+/api
 *.log
 coverage.out
 .DS_Store

@@ -1,0 +1,99 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/nu/student-event-ticketing-platform/internal/app"
+	"github.com/nu/student-event-ticketing-platform/internal/config"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/db"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/observability"
+	infraRedis "github.com/nu/student-event-ticketing-platform/internal/infra/redis"
+)
+
+// @title Student Event Ticketing Platform API
+// @version 0.1
+// @description Modular monolith backend (Go + Chi). HTTP handlers live in domain packages (`auth/handler`, `events/handler`, …) and are mounted under `/api/v1` in `internal/app`. See README for roles, RFC3339 dates, ticket QR fields, and the canonical list of `error.code` values.
+// @BasePath /api/v1
+// @schemes http
+// @host localhost:8080
+
+func main() {
+	ctx := context.Background()
+
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		panic(err)
+	}
+
+	logger := observability.NewLogger(cfg.AppEnv)
+
+	dbPool, err := db.Connect(ctx, cfg)
+	if err != nil {
+		logger.Error("postgres_connect_failed", "error", err)
+		panic(err)
+	}
+
+	rdb, err := infraRedis.Connect(ctx, cfg)
+	if err != nil {
+		logger.Error("redis_connect_failed", "error", err)
+		dbPool.Close()
+		panic(err)
+	}
+
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+
+	srv := &http.Server{
+		Addr:         cfg.Server.Address,
+		Handler:      app.NewRouter(cfg, dbPool, rdb, logger, workerCtx),
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("http_server_start", "addr", cfg.Server.Address)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	// Wait for shutdown (SIGINT / SIGTERM) or fatal listen error.
+	stopCh := make(chan os.Signal, 1)
+	signal.Notify(stopCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-stopCh:
+		logger.Info("shutdown_signal", "signal", sig.String())
+	case err := <-errCh:
+		logger.Error("server_listen_error", "error", err)
+	}
+
+	// Stop accepting new connections; drain in-flight requests (5–10s budget).
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("server_shutdown_failed", "error", err)
+	}
+
+	workerCancel()
+
+	if err := rdb.Close(); err != nil {
+		logger.Error("redis_close_failed", "error", err)
+	}
+	dbPool.Close()
+}
+
+// Compile-time checks for expected imports.
+var _ *pgxpool.Pool
+var _ *redis.Client
