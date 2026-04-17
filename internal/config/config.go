@@ -61,6 +61,11 @@ type Config struct {
 	}
 }
 
+// Load forwards to LoadFromEnv (legacy name used by some entrypoints).
+func Load() (Config, error) {
+	return LoadFromEnv()
+}
+
 func LoadFromEnv() (Config, error) {
 	var cfg Config
 
