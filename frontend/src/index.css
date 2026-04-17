@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-nu-gold: #C09C5C;
+  --color-nu-gold-light: #D4B77A;
+  --color-nu-dark: #1A1A2E;
+  --color-nu-navy: #16213E;
+  --color-nu-blue: #0F3460;
+  --color-nu-surface: #1E2A4A;
+  --color-nu-surface-light: #253556;
+  --color-nu-text: #E8E8E8;
+  --color-nu-text-muted: #9CA3AF;
+  --color-nu-success: #22C55E;
+  --color-nu-error: #EF4444;
+  --color-nu-warning: #F59E0B;
+  --font-sans: 'DM Sans', sans-serif;
+  --font-display: 'Sora', sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-nu-dark text-nu-text font-sans antialiased;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
