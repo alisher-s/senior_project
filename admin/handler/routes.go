@@ -93,6 +93,7 @@ type ModerationLogsResponseDTO struct {
 }
 
 // @Summary Set user role (admin only)
+// @Description **401** — missing/invalid JWT; **403** — `forbidden` if caller is not **admin**.
 // @Tags admin
 // @Accept json
 // @Produce json
@@ -160,6 +161,7 @@ func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Moderate event visibility (admin only)
+// @Description **401** / **403** — same as other admin routes (JWT + admin role).
 // @Tags admin
 // @Accept json
 // @Produce json
@@ -227,6 +229,7 @@ func (h *handler) handleModerateEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary List moderation audit logs (admin only)
+// @Description **401** / **403** — JWT + **admin** only.
 // @Tags admin
 // @Produce json
 // @Param Authorization header string true "Bearer access token (admin)"

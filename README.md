@@ -8,9 +8,9 @@
 
 | Сервис | Адрес (локально) | Примечание |
 |--------|------------------|------------|
-| HTTP API | `http://localhost:8080` | Префикс маршрутов: **`/api/v1`** |
-| PostgreSQL (Docker) | `localhost:5432` | Порт контейнера, проброшенный как `5432:5432` |
-| PostgreSQL (хост, для `go test` / psql) | `localhost:5433` | Доп. маппинг `5433:5432` в `docker-compose.yml`, если на машине уже занят `:5432` |
+| **HTTP API** | **`http://localhost:8080`** | Префикс маршрутов: **`/api/v1`** |
+| PostgreSQL (Docker, основной маппинг) | `localhost:5432` | `5432:5432` в `docker-compose.yml` |
+| **PostgreSQL (хост, для локальных тестов / `psql`, если `:5432` занят)** | **`localhost:5433`** | Доп. маппинг **`5433:5432`** на тот же контейнер |
 | Redis | `localhost:6379` | Rate limiting |
 
 Пример: проверка живости — `GET /api/v1/healthz`.
@@ -23,13 +23,13 @@
 
 ## Роли и права (MVP P2)
 
-| Роль | Назначение | Типовые операции |
-|------|------------|------------------|
-| **student** | Участник | `POST /auth/register`, `POST /auth/login`, просмотр **одобренных** событий, `POST /tickets/register`, отмена своего билета |
-| **organizer** | Организатор | То же, что student **плюс** создание событий (`POST /events`), сканирование QR / check-in (`POST /tickets/use`) |
-| **admin** | Администратор | То же, что organizer **плюс** модерация событий (`POST /admin/events/{id}/moderate`), смена ролей (`PATCH /admin/users/{id}/role`), доступ к заглушкам аналитики |
+| Роль | Назначение | Регистрация / просмотр | Создание событий / сканирование QR | Модерация / аналитика |
+|------|------------|------------------------|-------------------------------------|-------------------------|
+| **student** | Участник | `POST /auth/register`, `POST /auth/login`, список и карточка **одобренных** событий, `POST /tickets/register`, отмена своего билета | — | — |
+| **organizer** | Организатор | Как student | `POST /events`, `PUT`/`DELETE` **своих** событий, `POST /tickets/use` (check-in по `qr_hash_hex`), `GET /analytics/events/stats` (только свои события) | — |
+| **admin** | Администратор | Как organizer (в т.ч. события и check-in) | Без ограничения «только свои» для правок событий | `POST /admin/events/{id}/moderate`, `PATCH /admin/users/{id}/role`, `GET /admin/moderation-logs`, `GET /analytics/events/stats` (любые события) |
 
-Защита маршрутов: JWT в заголовке `Authorization: Bearer <access_token>`. **401 Unauthorized** — нет/битый токен (коды вроде `missing_authorization`, `invalid_token`). **403 Forbidden** — токен валиден, но роль не подходит (код `forbidden`).
+Защита маршрутов: JWT в заголовке `Authorization: Bearer <access_token>`. **401 Unauthorized** — нет или невалидный JWT (`missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims`, `invalid_credentials`, …). **403 Forbidden** — токен принят, но роль или правило не позволяют операцию (`forbidden`, `organizer_request_forbidden`, …). **409 Conflict** — конфликт доменной логики (например `already_registered`, `capacity_full` — см. таблицу ниже).
 
 Публичная регистрация выдаёт только роль **`student`**. Учётки staff для dev: см. миграцию `006_dev_staff_users.sql` и раздел ниже.
 
@@ -74,22 +74,24 @@
 |------|--------|----------------------|
 | **400** | Невалидное тело/параметры | `invalid_request`, `invalid_id`, `email_not_allowed`, `invalid_role`, `invalid_action` |
 | **401** | Нет или неверный JWT / подпись webhook | `missing_authorization`, `invalid_token`, `invalid_credentials`, `invalid_refresh_token`, `missing_signature`, … |
-| **403** | JWT ок, роль не разрешена; неверная подпись webhook | `forbidden`, `invalid_signature` |
+| **403** | JWT ок, роль не разрешена; запрос роли организатора не от студента; неверная подпись webhook | `forbidden`, `organizer_request_forbidden`, `invalid_signature` |
 | **404** | Сущность не найдена (в т.ч. скрытые неодобренные события для публичного GET) | `not_found`, `ticket_not_found` |
-| **409** | Конфликт бизнес-правил (билеты, вместимость) | `already_registered`, `capacity_full`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, `ticket_already_used`, … |
+| **409** | Конфликт бизнес-правил (билеты, вместимость, состояние события/билета) | `already_registered`, `capacity_full`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, `ticket_already_used`, `organizer_already_active`, … |
 | **429** | Rate limit | `rate_limited` |
 | **501** | Функция ещё не реализована | `not_implemented` |
 | **500** | Внутренняя ошибка | `internal_error` |
 
 ### Справочник `error.code` (текущая реализация)
 
-**Auth:** `invalid_request`, `email_not_allowed`, `email_exists`, `invalid_credentials`, `invalid_refresh_token`, `refresh_token_consumed`, `internal_error`.
+**Auth:** `invalid_request`, `email_not_allowed`, `email_exists`, `invalid_credentials`, `invalid_refresh_token`, `refresh_token_consumed`, `organizer_already_active`, `organizer_request_forbidden`, `internal_error`.
 
 **JWT / RBAC (middleware):** `missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims`, `missing_role`, `forbidden`.
 
 **Общие:** `unauthorized`, `invalid_id`, `not_found`, `invalid_request`, `invalid_role`, `invalid_action`, `internal_error`, `not_implemented`, `rate_limited`.
 
 **Билеты:** `capacity_full`, `already_registered`, `event_not_published`, `event_not_approved`, `event_cancelled`, `registration_closed`, `cancellation_not_allowed`, `check_in_not_open`, `ticket_not_found`, `ticket_already_cancelled`, `ticket_already_used`, `ticket_cannot_be_used`.
+
+**Платежи:** `not_implemented`, `not_found` (webhook: неизвестный `provider_ref`), `internal_error`.
 
 **Платежи (webhook):** `missing_signature`, `invalid_signature`.
 
@@ -108,7 +110,7 @@
 | `user_id` | string | UUID пользователя |
 | `status` | string | Статус билета |
 | **`qr_hash_hex`** | string | Хеш для check-in (`POST /tickets/use`) |
-| **`qr_png_base64`** | string | PNG QR в Base64 (для отображения в приложении) |
+| **`qr_png_base64`** | string | Двоичный PNG, закодированный в **стандартный Base64** (без префикса `data:image/...`; при необходимости префикс добавляет клиент) |
 
 Повторная регистрация на то же событие тем же пользователем: ожидайте **409** с `code: already_registered` (см. smoke-тесты в `agents.md`).
 
@@ -125,20 +127,22 @@
 | POST | `/auth/register` | Нет | — | Регистрация (`email`, `password` ≥ 8, домен NU) |
 | POST | `/auth/login` | Нет | — | Вход |
 | POST | `/auth/refresh` | Нет | — | Обновление пары токенов |
-| POST | `/events/` | Bearer | `organizer`, `admin` | Создание события; опционально **`cover_image_url`**; стартовая **модерация** — `pending` |
-| GET | `/events/` | Нет | — | Список **только одобренных** (`moderation_status=approved`); query: `limit`, `offset`, `q`, `starts_after`, `starts_before` |
+| PATCH | `/auth/me/roles` | Bearer | `student` (для запроса роли организатора) | Запрос роли organizer: тело `{"roles":["organizer"]}`; см. коды `organizer_request_forbidden`, `organizer_already_active` |
+| POST | `/events` | Bearer | `organizer`, `admin` | Создание события; опционально **`cover_image_url`**; стартовая **модерация** — `pending` |
+| GET | `/events` | Нет | — | Список **только одобренных** (`moderation_status=approved`); query: `limit` (по умолчанию **20**), `offset`, `q`, `starts_after`, `starts_before` (даты **RFC3339**) |
 | GET | `/events/{id}` | Нет | — | Карточка **только для одобренного** события; иначе 404 |
-| PUT | `/events/{id}` | Нет | — | Обновление полей, в т.ч. **`cover_image_url`** и `status`: `draft` / `published` / `cancelled` |
-| DELETE | `/events/{id}` | Нет | — | Удаление |
+| PUT | `/events/{id}` | Bearer | `organizer`, `admin` | Обновление полей, в т.ч. **`cover_image_url`** и `status`: `draft` / `published` / `cancelled`. Организатор — только **свои** события; иначе **403** |
+| DELETE | `/events/{id}` | Bearer | `organizer`, `admin` | Удаление; то же правило владения для organizer |
 | POST | `/tickets/register` | Bearer | `student` | Регистрация; см. поля QR выше |
 | POST | `/tickets/{id}/cancel` | Bearer | `student` | Отмена своего билета |
 | POST | `/tickets/use` | Bearer | `organizer`, `admin` | Вход по `qr_hash_hex` |
 | POST | `/payments/initiate` | Bearer | `student`, `organizer`, `admin` | Старт оплаты (`event_id`, `amount`, `currency` — 3 буквы) |
 | POST | `/payments/webhook` | Подпись `X-Signature` | — | Webhook провайдера (не для браузера) |
 | POST | `/notifications/send-email` | Нет | — | Постановка письма в очередь (`to`, `title`, `body`) |
-| GET | `/analytics/events/stats` | Bearer | Любая роль | Статистика (пока может быть **501**); query `event_id` опционален |
+| GET | `/analytics/events/stats` | Bearer | **`organizer`, `admin`** | Метрики регистраций и вместимости; query `event_id` опционален. Organizer видит только свои события; чужое — **403** |
 | PATCH | `/admin/users/{id}/role` | Bearer | `admin` | Назначение роли |
 | POST | `/admin/events/{id}/moderate` | Bearer | `admin` | Модерация: тело `{"action":"approve"|"reject","reason":"..."}`; ответ `moderation_status` |
+| GET | `/admin/moderation-logs` | Bearer | `admin` | Аудит модерации; query: `event_id`, `admin_id`, `limit`, `offset` |
 
 Ответы `register` / `login` / `refresh` (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
 
@@ -172,7 +176,7 @@ Redis: по умолчанию **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_
 | **payments** | Заглушка; возможны **501** |
 | **notifications** | Очередь и worker; HTTP может отвечать **501** |
 | **admin** | Смена ролей и **модерация событий** |
-| **analytics** | Пока **501** |
+| **analytics** | `GET /analytics/events/stats` для **organizer** и **admin** (реальные данные из БД) |
 
 ---
 
@@ -180,15 +184,20 @@ Redis: по умолчанию **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_
 
 ### Docker (рекомендуется, в том числе для фронтенда)
 
-Из корня репозитория:
+Из **корня** репозитория (где лежит `docker-compose.yml`):
 
 ```bash
 docker compose up --build
 ```
 
-Поднимутся **api** (`:8080`), **postgres** (`:5432` и **`:5433`** на хосте), **redis**. При **первом** создании тома Postgres выполняются миграции из `docker/postgres/migrations/`.
+Кратко для фронтенда:
 
-Для фронтенда обычно достаточно поднять весь стек и в `.env` фронта указать `VITE_API_URL=http://localhost:8080` (или аналог) с путями к `/api/v1/...`. Убедитесь, что origin dev-сервера — `localhost:3000` или `localhost:5173`, либо добавьте свой origin в CORS на бэкенде.
+1. Убедитесь, что установлен Docker (на macOS удобно OrbStack / Docker Desktop).
+2. Выполните команду выше — поднимутся **api** на **`http://localhost:8080`**, **postgres** на хосте **`localhost:5432`** и **`localhost:5433`**, **redis** на **`6379`**.
+3. Базовый URL API для запросов: `http://localhost:8080/api/v1/...`. Swagger UI: `http://localhost:8080/api/v1/swagger/index.html`.
+4. Во фронте задайте базовый URL (например `VITE_API_URL=http://localhost:8080`). Origin dev-сервера должен быть **`http://localhost:3000`** или **`http://localhost:5173`** (CORS на бэкенде), либо расширьте список в `internal/infra/http/middleware.go`.
+
+При **первом** создании тома Postgres выполняются миграции из `docker/postgres/migrations/`. Если меняли SQL после того, как том уже создан, см. `agents.md` (пересоздание тома или `scripts/apply-migrations.sh`).
 
 ### Только Go (нужны Postgres и Redis)
 

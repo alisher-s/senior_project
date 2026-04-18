@@ -21,7 +21,9 @@ import (
 
 // @title Student Event Ticketing Platform API
 // @version 0.1
-// @description Modular monolith backend (Go + Chi). HTTP handlers live in domain packages (`auth/handler`, `events/handler`, …) and are mounted under `/api/v1` in `internal/app`. See README for roles, RFC3339 dates, ticket QR fields, and the canonical list of `error.code` values.
+// @description Modular monolith backend (Go + Chi). HTTP handlers live in domain packages (`auth/handler`, `events/handler`, `ticketing/handler`, …) under `internal/app` at base path **`/api/v1`** (отдельного пакета `internal/api/v1` в репозитории нет).
+// @description **Ошибки:** тело `{ "error": { "code": "string", "message": "string" } }`. Типичные HTTP-коды: **401 Unauthorized** — нет/невалидный JWT (`missing_authorization`, `invalid_token`, `invalid_credentials`, …); **403 Forbidden** — RBAC (`forbidden`, `organizer_request_forbidden`, …); **409 Conflict** — билеты и бизнес-правила (`already_registered`, `capacity_full`, `event_not_approved`, …). Полный список `error.code` — в README.
+// @description Даты событий: **RFC3339**, например `2026-01-01T10:00:00Z`. Ответ `POST /tickets/register`: поля **`qr_hash_hex`** и **`qr_png_base64`**.
 // @BasePath /api/v1
 // @schemes http
 // @host localhost:8080

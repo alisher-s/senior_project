@@ -103,6 +103,7 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Cancel a ticket
+// @Description **401** — JWT; **403** — not a student; **409** — `ticket_already_cancelled`, `cancellation_not_allowed`, …
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -149,7 +150,7 @@ func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Mark ticket as used
-// @Description Check-in by QR hash; requires organizer or admin.
+// @Description Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **409** — `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, …
 // @Tags tickets
 // @Accept json
 // @Produce json

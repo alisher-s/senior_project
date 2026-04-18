@@ -90,8 +90,8 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param q query string false "Search query"
-// @Param limit query int false "Limit"
-// @Param offset query int false "Offset"
+// @Param limit query int false "Page size (default 20 if omitted or invalid; max 100)"
+// @Param offset query int false "Offset (default 0)"
 // @Param starts_after query string false "Filter starts_after (RFC3339)"
 // @Param starts_before query string false "Filter starts_before (RFC3339)"
 // @Success 200 {object} ListEventsResponseDTO

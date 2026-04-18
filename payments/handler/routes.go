@@ -60,6 +60,7 @@ type handler struct {
 }
 
 // @Summary Initiate a payment
+// @Description **401** — JWT; **403** — if role is not student/organizer/admin.
 // @Tags payments
 // @Accept json
 // @Produce json

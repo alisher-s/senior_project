@@ -4,7 +4,7 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "Modular monolith backend (Go + Chi). HTTP handlers live in domain packages (`auth/handler`, `events/handler`, …) and are mounted under `/api/v1` in `internal/app`. See README for roles, RFC3339 dates, ticket QR fields, and the canonical list of `error.code` values.",
+        "description": "Modular monolith backend (Go + Chi). HTTP handlers live in domain packages (`auth/handler`, `events/handler`, `ticketing/handler`, …) under `internal/app` at base path **`/api/v1`** (отдельного пакета `internal/api/v1` в репозитории нет).\n**Ошибки:** тело `{ \"error\": { \"code\": \"string\", \"message\": \"string\" } }`. Типичные HTTP-коды: **401 Unauthorized** — нет/невалидный JWT (`missing_authorization`, `invalid_token`, `invalid_credentials`, …); **403 Forbidden** — RBAC (`forbidden`, `organizer_request_forbidden`, …); **409 Conflict** — билеты и бизнес-правила (`already_registered`, `capacity_full`, `event_not_approved`, …). Полный список `error.code` — в README.\nДаты событий: **RFC3339**, например `2026-01-01T10:00:00Z`. Ответ `POST /tickets/register`: поля **`qr_hash_hex`** и **`qr_png_base64`**.",
         "title": "Student Event Ticketing Platform API",
         "contact": {},
         "version": "0.1"
@@ -14,6 +14,7 @@
     "paths": {
         "/admin/events/{id}/moderate": {
             "post": {
+                "description": "**401** / **403** — same as other admin routes (JWT + admin role).",
                 "consumes": [
                     "application/json"
                 ],
@@ -91,6 +92,7 @@
         },
         "/admin/moderation-logs": {
             "get": {
+                "description": "**401** / **403** — JWT + **admin** only.",
                 "produces": [
                     "application/json"
                 ],
@@ -167,6 +169,7 @@
         },
         "/admin/users/{id}/role": {
             "patch": {
+                "description": "**401** — missing/invalid JWT; **403** — `forbidden` if caller is not **admin**.",
                 "consumes": [
                     "application/json"
                 ],
@@ -244,7 +247,7 @@
         },
         "/analytics/events/stats": {
             "get": {
-                "description": "Registration and capacity metrics for an event or aggregated for the caller. Organizers see only their events; admins see any event or global aggregates.",
+                "description": "Registration and capacity metrics for an event or aggregated for the caller. **Requires organizer or admin** (students get **403 forbidden**). Organizers see only their events; admins see any event or global aggregates.",
                 "consumes": [
                     "application/json"
                 ],
@@ -348,6 +351,77 @@
                     },
                     "401": {
                         "description": "invalid_credentials",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/me/roles": {
+            "patch": {
+                "description": "Student-only flow: body must be exactly `{\"roles\":[\"organizer\"]}`. **401** — missing/invalid JWT (same codes as middleware). **403** — `organizer_request_forbidden` if caller is not an active student. **409** — `organizer_already_active` if organizer is already granted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Request organizer role (pending until admin approves)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer access token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "e.g. {\\",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.PatchMeRolesRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.MeRolesResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing_authorization, invalid_token, invalid_token_claims, …",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "organizer_request_forbidden (RBAC / business rule)",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "organizer_already_active",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -484,13 +558,13 @@
                     },
                     {
                         "type": "integer",
-                        "description": "Limit",
+                        "description": "Page size (default 20 if omitted or invalid; max 100)",
                         "name": "limit",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Offset",
+                        "description": "Offset (default 0)",
                         "name": "offset",
                         "in": "query"
                     },
@@ -853,6 +927,7 @@
         },
         "/payments/initiate": {
             "post": {
+                "description": "**401** — JWT; **403** — if role is not student/organizer/admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1077,7 +1152,7 @@
         },
         "/tickets/use": {
             "post": {
-                "description": "Check-in by QR hash; requires organizer or admin.",
+                "description": "Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **409** — `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, …",
                 "consumes": [
                     "application/json"
                 ],
@@ -1154,6 +1229,7 @@
         },
         "/tickets/{id}/cancel": {
             "post": {
+                "description": "**401** — JWT; **403** — not a student; **409** — `ticket_already_cancelled`, `cancellation_not_allowed`, …",
                 "consumes": [
                     "application/json"
                 ],
@@ -1289,7 +1365,9 @@
                     "maxLength": 2000
                 },
                 "starts_at": {
-                    "type": "string"
+                    "description": "RFC3339 / RFC3339Nano",
+                    "type": "string",
+                    "example": "2026-01-01T10:00:00Z"
                 },
                 "title": {
                     "type": "string",
@@ -1340,7 +1418,6 @@
                     "type": "string"
                 },
                 "registered_count": {
-                    "description": "Non-cancelled tickets (active + used) in scope for this response.",
                     "type": "integer"
                 },
                 "registration_timeline": {
@@ -1350,11 +1427,9 @@
                     }
                 },
                 "remaining_capacity": {
-                    "description": "max(0, total_capacity − registered_count); same snapshot as other fields.",
                     "type": "integer"
                 },
                 "total_capacity": {
-                    "description": "Event capacity_total, or sum across events in scope when aggregated.",
                     "type": "integer"
                 }
             }
@@ -1428,6 +1503,14 @@
                 }
             }
         },
+        "handler.MeRolesResponseDTO": {
+            "type": "object",
+            "properties": {
+                "user": {
+                    "$ref": "#/definitions/handler.UserDTO"
+                }
+            }
+        },
         "handler.ModerateEventRequestDTO": {
             "type": "object",
             "required": [
@@ -1495,6 +1578,22 @@
                 }
             }
         },
+        "handler.PatchMeRolesRequestDTO": {
+            "type": "object",
+            "required": [
+                "roles"
+            ],
+            "properties": {
+                "roles": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handler.PaymentWebhookRequestDTO": {
             "type": "object",
             "required": [
@@ -1556,10 +1655,14 @@
                     "type": "string"
                 },
                 "qr_hash_hex": {
-                    "type": "string"
+                    "description": "QRHashHex is the check-in digest sent to POST /tickets/use.",
+                    "type": "string",
+                    "example": "a1b2c3d4e5f6789012345678901234567890abcd"
                 },
                 "qr_png_base64": {
-                    "type": "string"
+                    "description": "QRPNGBase64 is raw PNG bytes encoded as standard Base64 (no data: URL prefix).",
+                    "type": "string",
+                    "example": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
                 },
                 "status": {
                     "type": "string"
@@ -1628,7 +1731,8 @@
                     "maxLength": 2000
                 },
                 "starts_at": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "2026-01-01T10:00:00Z"
                 },
                 "status": {
                     "type": "string",
@@ -1682,8 +1786,20 @@
                 "id": {
                     "type": "string"
                 },
+                "pending_roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "role": {
                     "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

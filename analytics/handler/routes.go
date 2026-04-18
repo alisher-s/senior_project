@@ -46,7 +46,7 @@ type handler struct {
 }
 
 // @Summary Event statistics
-// @Description Registration and capacity metrics for an event or aggregated for the caller. Organizers see only their events; admins see any event or global aggregates.
+// @Description Registration and capacity metrics for an event or aggregated for the caller. **Requires organizer or admin** (students get **403 forbidden**). Organizers see only their events; admins see any event or global aggregates.
 // @Tags analytics
 // @Accept json
 // @Produce json

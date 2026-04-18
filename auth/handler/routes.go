@@ -149,6 +149,7 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Request organizer role (pending until admin approves)
+// @Description Student-only flow: body must be exactly `{"roles":["organizer"]}`. **401** — missing/invalid JWT (same codes as middleware). **403** — `organizer_request_forbidden` if caller is not an active student. **409** — `organizer_already_active` if organizer is already granted.
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -156,9 +157,9 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 // @Param request body PatchMeRolesRequestDTO true "e.g. {\"roles\":[\"organizer\"]}"
 // @Success 200 {object} MeRolesResponseDTO
 // @Failure 400 {object} httpx.ErrorResponse
-// @Failure 401 {object} httpx.ErrorResponse
-// @Failure 403 {object} httpx.ErrorResponse
-// @Failure 409 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "missing_authorization, invalid_token, invalid_token_claims, …"
+// @Failure 403 {object} httpx.ErrorResponse "organizer_request_forbidden (RBAC / business rule)"
+// @Failure 409 {object} httpx.ErrorResponse "organizer_already_active"
 // @Failure 500 {object} httpx.ErrorResponse
 // @Router /auth/me/roles [patch]
 func (h *handler) handlePatchMeRoles(w http.ResponseWriter, r *http.Request) {
