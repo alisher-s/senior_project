@@ -32,7 +32,6 @@ definitions:
         minimum: 1
         type: integer
       cover_image_url:
-        description: Optional HTTPS URL of the event cover image (hosted elsewhere).
         maxLength: 2048
         type: string
       description:
@@ -56,8 +55,6 @@ definitions:
       capacity_total:
         type: integer
       cover_image_url:
-        description: HTTPS URL of the cover image when set.
-        maxLength: 2048
         type: string
       description:
         type: string
@@ -234,7 +231,6 @@ definitions:
         minimum: 1
         type: integer
       cover_image_url:
-        description: Set or clear the cover image URL (empty string removes it).
         maxLength: 2048
         type: string
       description:
@@ -642,6 +638,11 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: Bearer access token (organizer or admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Event ID (UUID)
         in: path
         name: id
@@ -654,6 +655,14 @@ paths:
           description: No Content
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Missing/invalid JWT
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Wrong role or organizer does not own the event
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "404":
@@ -704,6 +713,11 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: Bearer access token (organizer or admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Event ID (UUID)
         in: path
         name: id
@@ -724,6 +738,14 @@ paths:
             $ref: '#/definitions/handler.EventDTO'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Missing/invalid JWT
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Wrong role or organizer does not own the event
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "404":

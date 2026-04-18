@@ -33,8 +33,8 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/", h.handleCreate)
 		r.Get("/", h.handleList)
 		r.Get("/{id}", h.handleGetByID)
-		r.Put("/{id}", h.handleUpdate)
-		r.Delete("/{id}", h.handleDelete)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Put("/{id}", h.handleUpdate)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Delete("/{id}", h.handleDelete)
 	})
 }
 
@@ -225,10 +225,13 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 // @Tags events
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
 // @Param id path string true "Event ID (UUID)"
 // @Param request body UpdateEventRequestDTO true "Update event request"
 // @Success 200 {object} EventDTO
 // @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "Missing/invalid JWT"
+// @Failure 403 {object} httpx.ErrorResponse "Wrong role or organizer does not own the event"
 // @Failure 404 {object} httpx.ErrorResponse
 // @Failure 500 {object} httpx.ErrorResponse
 // @Router /events/{id} [put]
@@ -240,6 +243,44 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
 		})
 		return
+	}
+
+	role, ok := authx.RoleFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
+		})
+		return
+	}
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	existing, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+			})
+			return
+		}
+		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to load event"},
+		})
+		return
+	}
+
+	if role == authx.RoleOrganizer {
+		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
+			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to modify this event"},
+			})
+			return
+		}
 	}
 
 	var req UpdateEventRequestDTO
@@ -277,9 +318,12 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // @Tags events
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
 // @Param id path string true "Event ID (UUID)"
 // @Success 204 "No Content"
 // @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "Missing/invalid JWT"
+// @Failure 403 {object} httpx.ErrorResponse "Wrong role or organizer does not own the event"
 // @Failure 404 {object} httpx.ErrorResponse
 // @Failure 500 {object} httpx.ErrorResponse
 // @Router /events/{id} [delete]
@@ -291,6 +335,44 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
 		})
 		return
+	}
+
+	role, ok := authx.RoleFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
+		})
+		return
+	}
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	existing, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+			})
+			return
+		}
+		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to load event"},
+		})
+		return
+	}
+
+	if role == authx.RoleOrganizer {
+		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
+			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to delete this event"},
+			})
+			return
+		}
 	}
 
 	if err := h.svc.Delete(r.Context(), id); err != nil {

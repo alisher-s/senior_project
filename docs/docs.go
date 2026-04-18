@@ -570,6 +570,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Bearer access token (organizer or admin)",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
@@ -594,6 +601,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing/invalid JWT",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wrong role or organizer does not own the event",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -626,6 +645,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Bearer access token (organizer or admin)",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
@@ -638,6 +664,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing/invalid JWT",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wrong role or organizer does not own the event",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -1158,7 +1196,6 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "cover_image_url": {
-                    "description": "Optional HTTPS URL of the event cover image (hosted elsewhere).",
                     "type": "string",
                     "maxLength": 2048
                 },
@@ -1186,9 +1223,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "cover_image_url": {
-                    "description": "HTTPS URL of the cover image when set.",
-                    "type": "string",
-                    "maxLength": 2048
+                    "type": "string"
                 },
                 "description": {
                     "type": "string"
@@ -1448,7 +1483,6 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "cover_image_url": {
-                    "description": "Set or clear the cover image URL (empty string removes it).",
                     "type": "string",
                     "maxLength": 2048
                 },
