@@ -302,14 +302,40 @@ definitions:
       user_id:
         type: string
     type: object
+  handler.MeRolesResponseDTO:
+    properties:
+      user:
+        $ref: '#/definitions/handler.UserDTO'
+    type: object
+  handler.PatchMeRolesRequestDTO:
+    properties:
+      roles:
+        items:
+          enum:
+          - organizer
+          type: string
+        type: array
+    required:
+    - roles
+    type: object
   handler.UserDTO:
     properties:
       email:
         type: string
       id:
         type: string
+      pending_roles:
+        items:
+          type: string
+        type: array
       role:
+        description: Legacy primary role from users.role (kept for backward compatibility).
         type: string
+      roles:
+        description: Active roles from user_roles (status=active).
+        items:
+          type: string
+        type: array
     type: object
   handler.UserRoleResponseDTO:
     properties:
@@ -645,6 +671,52 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Register a new user
+      tags:
+      - auth
+  /auth/me/roles:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 'Request organizer role (pending until admin approves via PATCH /admin/users/{id}/role)'
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.PatchMeRolesRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.MeRolesResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: organizer_request_forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "409":
+          description: organizer_already_active
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: Request organizer role (pending until admin approves)
       tags:
       - auth
   /events:

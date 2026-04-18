@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/mail"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,10 +19,10 @@ import (
 )
 
 type Service struct {
-	cfg           config.Config
-	users        repository.UserRepository
-	refreshTokens repository.RefreshTokenRepository
-	jwt           authx.JWT
+	cfg            config.Config
+	users          repository.UserRepository
+	refreshTokens  repository.RefreshTokenRepository
+	jwt            authx.JWT
 }
 
 func New(
@@ -32,10 +33,18 @@ func New(
 ) *Service {
 	return &Service{
 		cfg:           cfg,
-		users:        users,
+		users:         users,
 		refreshTokens: refreshTokens,
 		jwt:           jwt,
 	}
+}
+
+func activeRolesAuthx(u model.User) []authx.Role {
+	out := make([]authx.Role, len(u.ActiveRoles))
+	for i, r := range u.ActiveRoles {
+		out[i] = authx.Role(r)
+	}
+	return out
 }
 
 func (s *Service) Register(ctx context.Context, email, password string) (model.User, string, string, error) {
@@ -63,12 +72,13 @@ func (s *Service) Register(ctx context.Context, email, password string) (model.U
 		return model.User{}, "", "", err
 	}
 
-	access, err := s.jwt.GenerateAccessToken(u.ID, authx.Role(u.Role))
+	ar := activeRolesAuthx(u)
+	access, err := s.jwt.GenerateAccessToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
 
-	refresh, jti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, authx.Role(u.Role))
+	refresh, jti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
@@ -93,18 +103,17 @@ func (s *Service) Login(ctx context.Context, email, password string) (model.User
 		return model.User{}, "", "", ErrInvalidCredentials
 	}
 
-	access, err := s.jwt.GenerateAccessToken(u.ID, authx.Role(u.Role))
+	ar := activeRolesAuthx(u)
+	access, err := s.jwt.GenerateAccessToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
 
-	refresh, jti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, authx.Role(u.Role))
+	refresh, jti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
 
-	// Security choice: rotate refresh token on login so only one refresh token is usable.
-	// We do revoke+insert atomically and serialize concurrent logins for the same user.
 	if err := s.refreshTokens.RotateRefreshToken(ctx, u.ID, jti, expiresAt); err != nil {
 		return model.User{}, "", "", err
 	}
@@ -119,6 +128,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (model.User,
 		return model.User{}, "", "", ErrRefreshTokenInvalid
 	}
 
+	tokRoles, err := authx.EffectiveRefreshRoles(claims)
+	if err != nil {
+		return model.User{}, "", "", ErrRefreshTokenInvalid
+	}
+
 	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {
 		return model.User{}, "", "", ErrRefreshTokenInvalid
@@ -128,8 +142,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (model.User,
 		return model.User{}, "", "", ErrRefreshTokenInvalid
 	}
 
-	// Role check prevents using a refresh token from another user/role scenario.
-	if authx.Role(u.Role) != claims.Role {
+	if !authx.RolesEqual(tokRoles, activeRolesAuthx(u)) {
 		return model.User{}, "", "", ErrRefreshTokenInvalid
 	}
 
@@ -147,12 +160,13 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (model.User,
 		return model.User{}, "", "", ErrRefreshTokenConsumed
 	}
 
-	access, err := s.jwt.GenerateAccessToken(u.ID, authx.Role(u.Role))
+	ar := activeRolesAuthx(u)
+	access, err := s.jwt.GenerateAccessToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
 
-	refresh, newJti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, authx.Role(u.Role))
+	refresh, newJti, expiresAt, err := s.jwt.GenerateRefreshToken(u.ID, ar, authx.Role(u.Role))
 	if err != nil {
 		return model.User{}, "", "", err
 	}
@@ -163,10 +177,36 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (model.User,
 	return u, access, refresh, nil
 }
 
+// RequestOrganizerRole records a pending organizer role for the caller (student self-service).
+func (s *Service) RequestOrganizerRole(ctx context.Context, userID uuid.UUID, requested []string) error {
+	if len(requested) != 1 || requested[0] != string(model.RoleOrganizer) {
+		return ErrOrganizerRequestInvalidBody
+	}
+
+	u, err := s.users.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if !slices.Contains(u.ActiveRoles, model.RoleStudent) {
+		return ErrOrganizerRequestNotAllowed
+	}
+	if slices.Contains(u.ActiveRoles, model.RoleOrganizer) {
+		return ErrOrganizerAlreadyActive
+	}
+	if slices.Contains(u.PendingRoles, model.RoleOrganizer) {
+		return nil
+	}
+
+	return s.users.EnsureOrganizerRolePending(ctx, userID)
+}
+
+// UserByID returns the user with active and pending roles (for /auth/me responses).
+func (s *Service) UserByID(ctx context.Context, id uuid.UUID) (model.User, error) {
+	return s.users.GetUserByID(ctx, id)
+}
+
 func validateEmail(email string) error {
-	// net/mail is good enough for domain-level validation.
-	// For production, consider stricter MX checks.
 	_, err := mail.ParseAddress(email)
 	return err
 }
-

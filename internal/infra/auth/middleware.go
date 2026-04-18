@@ -34,7 +34,14 @@ func AuthMiddleware(jwt JWT) func(http.Handler) http.Handler {
 				return
 			}
 
-			role := claims.Role
+			effRoles, err := EffectiveAccessRoles(claims)
+			if err != nil {
+				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+					Error: httpx.ErrorBody{Code: "invalid_token_claims", Message: "invalid token claims"},
+				})
+				return
+			}
+
 			userIDStr := claims.UserID
 			userID, err := uuid.Parse(userIDStr)
 			if err != nil {
@@ -44,13 +51,13 @@ func AuthMiddleware(jwt JWT) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := WithAccessClaims(r.Context(), userID, role)
+			ctx := WithAccessClaims(r.Context(), userID, effRoles)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// RequireRole allows the request only for user roles included in allowed.
+// RequireRole allows the request if the JWT includes at least one of the allowed roles.
 func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 	allowedSet := make(map[Role]struct{}, len(allowed))
 	for _, a := range allowed {
@@ -59,15 +66,22 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, ok := RoleFromContext(r.Context())
-			if !ok {
+			roles, ok := RolesFromContext(r.Context())
+			if !ok || len(roles) == 0 {
 				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
 					Error: httpx.ErrorBody{Code: "missing_role", Message: "missing user role"},
 				})
 				return
 			}
 
-			if _, ok := allowedSet[role]; !ok {
+			granted := false
+			for _, rle := range roles {
+				if _, ok := allowedSet[rle]; ok {
+					granted = true
+					break
+				}
+			}
+			if !granted {
 				_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
 					Error: httpx.ErrorBody{Code: "forbidden", Message: "insufficient permissions"},
 				})
@@ -78,4 +92,3 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 		})
 	}
 }
-

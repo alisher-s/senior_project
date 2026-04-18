@@ -24,9 +24,19 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 func (p *Postgres) CreateUser(ctx context.Context, email string, passwordHash string, role model.Role) (model.User, error) {
 	id := uuid.New()
 
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return model.User{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
 	var u model.User
-	// Note: role is validated in service; repository keeps a simple insert returning values.
-	err := p.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO users (id, email, password_hash, role)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, email, password_hash, role, created_at, updated_at
@@ -37,6 +47,23 @@ func (p *Postgres) CreateUser(ctx context.Context, email string, passwordHash st
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return model.User{}, ErrEmailAlreadyExists
 		}
+		return model.User{}, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status)
+		VALUES ($1, $2, 'active')
+	`, u.ID, string(role))
+	if err != nil {
+		return model.User{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return model.User{}, err
+	}
+	committed = true
+
+	if err := p.mergeRoleRows(ctx, &u); err != nil {
 		return model.User{}, err
 	}
 	return u, nil
@@ -55,6 +82,9 @@ func (p *Postgres) GetUserByEmail(ctx context.Context, email string) (model.User
 		}
 		return model.User{}, err
 	}
+	if err := p.mergeRoleRows(ctx, &u); err != nil {
+		return model.User{}, err
+	}
 	return u, nil
 }
 
@@ -71,7 +101,49 @@ func (p *Postgres) GetUserByID(ctx context.Context, id uuid.UUID) (model.User, e
 		}
 		return model.User{}, err
 	}
+	if err := p.mergeRoleRows(ctx, &u); err != nil {
+		return model.User{}, err
+	}
 	return u, nil
+}
+
+func (p *Postgres) mergeRoleRows(ctx context.Context, u *model.User) error {
+	rows, err := p.pool.Query(ctx, `
+		SELECT role, status FROM user_roles WHERE user_id = $1
+	`, u.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var active, pending []model.Role
+	for rows.Next() {
+		var roleStr, status string
+		if err := rows.Scan(&roleStr, &status); err != nil {
+			return err
+		}
+		r := model.Role(roleStr)
+		switch status {
+		case "active":
+			active = append(active, r)
+		case "pending":
+			pending = append(pending, r)
+		default:
+			continue
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(active) == 0 {
+		// No active user_roles row (legacy row missing or only pending rows): fall back to users.role.
+		u.ActiveRoles = []model.Role{u.Role}
+	} else {
+		u.ActiveRoles = active
+	}
+	u.PendingRoles = pending
+	return nil
 }
 
 func (p *Postgres) UpdateUserRole(ctx context.Context, id uuid.UUID, role model.Role) (model.User, error) {
@@ -79,8 +151,19 @@ func (p *Postgres) UpdateUserRole(ctx context.Context, id uuid.UUID, role model.
 		return model.User{}, err
 	}
 
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return model.User{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
 	var u model.User
-	err := p.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE users
 		SET role = $2, updated_at = NOW()
 		WHERE id = $1
@@ -92,7 +175,79 @@ func (p *Postgres) UpdateUserRole(ctx context.Context, id uuid.UUID, role model.
 		}
 		return model.User{}, err
 	}
+
+	if err := syncUserRolesInTx(ctx, tx, id, role); err != nil {
+		return model.User{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return model.User{}, err
+	}
+	committed = true
+
+	if err := p.mergeRoleRows(ctx, &u); err != nil {
+		return model.User{}, err
+	}
 	return u, nil
+}
+
+func syncUserRolesInTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, role model.Role) error {
+	switch role {
+	case model.RoleStudent:
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM user_roles WHERE user_id = $1 AND role IN ('organizer', 'admin')
+		`, userID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'student', 'active')
+			ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+		`, userID)
+		return err
+
+	case model.RoleOrganizer:
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'
+		`, userID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'student', 'active')
+			ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+		`, userID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'organizer', 'active')
+			ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+		`, userID)
+		return err
+
+	case model.RoleAdmin:
+		if _, err := tx.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, userID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'admin', 'active')
+		`, userID)
+		return err
+
+	default:
+		return errors.New("unsupported role")
+	}
+}
+
+func (p *Postgres) EnsureOrganizerRolePending(ctx context.Context, userID uuid.UUID) error {
+	tag, err := p.pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'organizer', 'pending')
+		ON CONFLICT (user_id, role) DO UPDATE SET
+			status = CASE WHEN user_roles.status = 'active' THEN user_roles.status ELSE 'pending' END
+	`, userID)
+	if err != nil {
+		return err
+	}
+	_ = tag
+	return nil
 }
 
 func (p *Postgres) RevokeTokensByUserID(ctx context.Context, userID uuid.UUID) error {
@@ -113,10 +268,6 @@ func (p *Postgres) InsertRefreshToken(ctx context.Context, jti uuid.UUID, userID
 }
 
 func (p *Postgres) RotateRefreshToken(ctx context.Context, userID uuid.UUID, jti uuid.UUID, expiresAt time.Time) error {
-	// Serialize concurrent logins for the same user:
-	// 1) Lock user's row with FOR UPDATE
-	// 2) Revoke existing refresh tokens
-	// 3) Insert new refresh token
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -128,12 +279,10 @@ func (p *Postgres) RotateRefreshToken(ctx context.Context, userID uuid.UUID, jti
 		}
 	}()
 
-	// Lock the user row to ensure concurrent login requests do not overlap.
 	var lockedID uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&lockedID); err != nil {
 		return err
 	}
-	_ = lockedID
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE refresh_tokens
@@ -158,10 +307,6 @@ func (p *Postgres) RotateRefreshToken(ctx context.Context, userID uuid.UUID, jti
 }
 
 func (p *Postgres) ConsumeRefreshToken(ctx context.Context, jti uuid.UUID, userID uuid.UUID, now time.Time) (bool, error) {
-	// Single-use token consumption:
-	// - revoked_at must be NULL
-	// - token must not be expired
-	// The update is atomic; exactly one call succeeds.
 	cmdTag := p.pool.QueryRow(ctx, `
 		UPDATE refresh_tokens
 		SET revoked_at = $4
@@ -182,4 +327,3 @@ func (p *Postgres) ConsumeRefreshToken(ctx context.Context, jti uuid.UUID, userI
 	}
 	return one == 1, nil
 }
-

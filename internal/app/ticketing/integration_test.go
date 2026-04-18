@@ -96,6 +96,15 @@ func TestFullLifecycleTicketing(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT 1 FROM events LIMIT 1`).Scan(&one); err != nil {
 		t.Skipf("schema/events missing: %v", err)
 	}
+	var userRolesOK bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'user_roles'
+		)
+	`).Scan(&userRolesOK); err != nil || !userRolesOK {
+		t.Skipf("user_roles table missing (apply docker/postgres/migrations/011_user_roles.sql): %v", err)
+	}
 
 	rdb, err := redis.Connect(ctx, cfg)
 	if err != nil {
@@ -143,6 +152,24 @@ func TestFullLifecycleTicketing(t *testing.T) {
 	_, err = pool.Exec(ctx, `UPDATE users SET role = 'organizer' WHERE id = $1`, orgID)
 	if err != nil {
 		t.Fatalf("promote organizer: %v", err)
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (admin cleanup): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'student', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (student): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'organizer', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (organizer): %v", err)
 	}
 
 	orgLogin := mustLogin(t, base, orgEmail, password)

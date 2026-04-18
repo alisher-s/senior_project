@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -21,14 +22,16 @@ const (
 )
 
 type AccessClaims struct {
-	UserID string `json:"user_id"`
-	Role   Role   `json:"role"`
+	UserID string   `json:"user_id"`
+	Role   Role     `json:"role"`
+	Roles  []string `json:"roles"`
 	jwt.RegisteredClaims
 }
 
 type RefreshClaims struct {
-	UserID string `json:"user_id"`
-	Role   Role   `json:"role"`
+	UserID string   `json:"user_id"`
+	Role   Role     `json:"role"`
+	Roles  []string `json:"roles"`
 	jwt.RegisteredClaims
 }
 
@@ -37,6 +40,7 @@ type ctxKey string
 const (
 	ctxUserIDKey ctxKey = "jwt_user_id"
 	ctxRoleKey   ctxKey = "jwt_role"
+	ctxRolesKey  ctxKey = "jwt_roles"
 )
 
 func NewJWT(cfg config.Config) JWT {
@@ -59,12 +63,15 @@ type JWT struct {
 	audience      string
 }
 
-func (j JWT) GenerateAccessToken(userID uuid.UUID, role Role) (string, error) {
+// GenerateAccessToken issues an access JWT. legacyRole mirrors users.role for clients that still read the singular claim.
+func (j JWT) GenerateAccessToken(userID uuid.UUID, roles []Role, legacyRole Role) (string, error) {
 	now := time.Now().UTC()
 	userIDStr := userID.String()
+	roleStrs := rolesToStrings(roles)
 	claims := AccessClaims{
 		UserID: userIDStr,
-		Role:   role,
+		Role:   legacyRole,
+		Roles:  roleStrs,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    j.issuer,
 			Subject:   userIDStr,
@@ -78,7 +85,7 @@ func (j JWT) GenerateAccessToken(userID uuid.UUID, role Role) (string, error) {
 	return t.SignedString(j.accessSecret)
 }
 
-func (j JWT) GenerateRefreshToken(userID uuid.UUID, role Role) (string, uuid.UUID, time.Time, error) {
+func (j JWT) GenerateRefreshToken(userID uuid.UUID, roles []Role, legacyRole Role) (string, uuid.UUID, time.Time, error) {
 	now := time.Now().UTC()
 	userIDStr := userID.String()
 	jti := uuid.New()
@@ -86,7 +93,8 @@ func (j JWT) GenerateRefreshToken(userID uuid.UUID, role Role) (string, uuid.UUI
 
 	claims := RefreshClaims{
 		UserID: userIDStr,
-		Role:   role,
+		Role:   legacyRole,
+		Roles:  rolesToStrings(roles),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    j.issuer,
 			Subject:   userIDStr,
@@ -129,10 +137,8 @@ func (j JWT) ParseAccessToken(tokenStr string) (*AccessClaims, error) {
 	if !audOK {
 		return nil, fmt.Errorf("invalid audience in access token")
 	}
-	switch claims.Role {
-	case RoleStudent, RoleOrganizer, RoleAdmin:
-	default:
-		return nil, fmt.Errorf("invalid role in access token: %q", claims.Role)
+	if _, err := effectiveRolesFromClaims(claims.Roles, claims.Role); err != nil {
+		return nil, err
 	}
 	return claims, nil
 }
@@ -167,17 +173,131 @@ func (j JWT) ParseRefreshToken(tokenStr string) (*RefreshClaims, error) {
 	if !audOK {
 		return nil, fmt.Errorf("invalid audience in refresh token")
 	}
-	switch claims.Role {
-	case RoleStudent, RoleOrganizer, RoleAdmin:
-	default:
-		return nil, fmt.Errorf("invalid role in refresh token: %q", claims.Role)
+	if _, err := effectiveRolesFromClaims(claims.Roles, claims.Role); err != nil {
+		return nil, err
 	}
 	return claims, nil
 }
 
-func WithAccessClaims(ctx context.Context, userID uuid.UUID, role Role) context.Context {
+// EffectiveAccessRoles returns normalized roles from claims (prefers "roles" array; falls back to legacy "role").
+func EffectiveAccessRoles(c *AccessClaims) ([]Role, error) {
+	return effectiveRolesFromClaims(c.Roles, c.Role)
+}
+
+// EffectiveRefreshRoles returns normalized roles from refresh claims.
+func EffectiveRefreshRoles(c *RefreshClaims) ([]Role, error) {
+	return effectiveRolesFromClaims(c.Roles, c.Role)
+}
+
+func effectiveRolesFromClaims(roles []string, legacy Role) ([]Role, error) {
+	var out []Role
+	if len(roles) > 0 {
+		for _, s := range roles {
+			r := Role(s)
+			switch r {
+			case RoleStudent, RoleOrganizer, RoleAdmin:
+				out = append(out, r)
+			default:
+				return nil, fmt.Errorf("invalid role in token: %q", s)
+			}
+		}
+	} else if legacy != "" {
+		switch legacy {
+		case RoleStudent, RoleOrganizer, RoleAdmin:
+			out = []Role{legacy}
+		default:
+			return nil, fmt.Errorf("invalid role in token: %q", legacy)
+		}
+	}
+	out = dedupeRolesSorted(out)
+	if len(out) == 0 {
+		return nil, errors.New("missing roles in token")
+	}
+	return out, nil
+}
+
+func rolesToStrings(roles []Role) []string {
+	if len(roles) == 0 {
+		return nil
+	}
+	out := dedupeRolesSorted(slices.Clone(roles))
+	s := make([]string, len(out))
+	for i, r := range out {
+		s[i] = string(r)
+	}
+	return s
+}
+
+func dedupeRolesSorted(roles []Role) []Role {
+	if len(roles) <= 1 {
+		return roles
+	}
+	seen := make(map[Role]struct{}, len(roles))
+	var uniq []Role
+	for _, r := range roles {
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		uniq = append(uniq, r)
+	}
+	slices.SortFunc(uniq, func(a, b Role) int {
+		return cmpString(string(a), string(b))
+	})
+	return uniq
+}
+
+func cmpString(a, b string) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+// PrimaryRole picks admin > organizer > student when multiple roles are present (legacy single-role checks).
+func PrimaryRole(roles []Role) Role {
+	set := make(map[Role]struct{}, len(roles))
+	for _, r := range roles {
+		set[r] = struct{}{}
+	}
+	for _, pick := range []Role{RoleAdmin, RoleOrganizer, RoleStudent} {
+		if _, ok := set[pick]; ok {
+			return pick
+		}
+	}
+	return ""
+}
+
+// RolesEqual compares two role slices as sets (order-insensitive).
+func RolesEqual(a, b []Role) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ma := make(map[Role]int, len(a))
+	for _, r := range a {
+		ma[r]++
+	}
+	for _, r := range b {
+		ma[r]--
+		if ma[r] < 0 {
+			return false
+		}
+	}
+	for _, n := range ma {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func WithAccessClaims(ctx context.Context, userID uuid.UUID, roles []Role) context.Context {
 	ctx = context.WithValue(ctx, ctxUserIDKey, userID)
-	ctx = context.WithValue(ctx, ctxRoleKey, role)
+	ctx = context.WithValue(ctx, ctxRolesKey, roles)
+	ctx = context.WithValue(ctx, ctxRoleKey, PrimaryRole(roles))
 	return ctx
 }
 
@@ -187,9 +307,31 @@ func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return id, ok
 }
 
+// RoleFromContext returns PrimaryRole for backward compatibility with code that expects a single role.
 func RoleFromContext(ctx context.Context) (Role, bool) {
-	v := ctx.Value(ctxRoleKey)
-	role, ok := v.(Role)
-	return role, ok
+	roles, ok := RolesFromContext(ctx)
+	if !ok || len(roles) == 0 {
+		return "", false
+	}
+	return PrimaryRole(roles), true
 }
 
+func RolesFromContext(ctx context.Context) ([]Role, bool) {
+	v := ctx.Value(ctxRolesKey)
+	roles, ok := v.([]Role)
+	return roles, ok
+}
+
+// HasRole reports whether the JWT carries the given role.
+func HasRole(ctx context.Context, want Role) bool {
+	roles, ok := RolesFromContext(ctx)
+	if !ok {
+		return false
+	}
+	for _, r := range roles {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}

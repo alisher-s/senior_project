@@ -67,14 +67,13 @@ func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	role, ok := authx.RoleFromContext(r.Context())
-	if !ok {
+	if _, ok := authx.RoleFromContext(r.Context()); !ok {
 		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
 		})
 		return
 	}
-	isAdmin := role == authx.RoleAdmin
+	isAdmin := authx.HasRole(r.Context(), authx.RoleAdmin)
 
 	eventIDParam := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	var eventID *uuid.UUID

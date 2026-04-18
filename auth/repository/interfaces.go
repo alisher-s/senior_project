@@ -13,8 +13,10 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, email string, passwordHash string, role model.Role) (model.User, error)
 	GetUserByEmail(ctx context.Context, email string) (model.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (model.User, error)
-	// UpdateUserRole sets role and revokes refresh tokens so JWT/refresh reflect the new role.
+	// UpdateUserRole sets users.role, syncs user_roles, and revokes refresh tokens so JWT/refresh reflect the new role.
 	UpdateUserRole(ctx context.Context, id uuid.UUID, role model.Role) (model.User, error)
+	// EnsureOrganizerRolePending inserts or updates organizer as pending (idempotent if already pending).
+	EnsureOrganizerRolePending(ctx context.Context, userID uuid.UUID) error
 }
 
 type RefreshTokenRepository interface {
@@ -27,4 +29,3 @@ type RefreshTokenRepository interface {
 	// Returns true only if the token existed, was not revoked and not expired.
 	ConsumeRefreshToken(ctx context.Context, jti uuid.UUID, userID uuid.UUID, now time.Time) (bool, error)
 }
-

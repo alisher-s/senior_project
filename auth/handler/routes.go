@@ -14,7 +14,7 @@ import (
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 
-	"github.com/nu/student-event-ticketing-platform/auth/repository"
+	authrepo "github.com/nu/student-event-ticketing-platform/auth/repository"
 	"github.com/nu/student-event-ticketing-platform/auth/service"
 )
 
@@ -27,7 +27,7 @@ type Deps struct {
 }
 
 func RegisterRoutes(r chi.Router, deps Deps) {
-	userRepo := repository.NewPostgres(deps.DB)
+	userRepo := authrepo.NewPostgres(deps.DB)
 	svc := service.New(deps.Cfg, userRepo, userRepo, deps.JWT)
 
 	h := &handler{
@@ -41,6 +41,7 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 			r.Post("/register", h.handleRegister)
 			r.Post("/login", h.handleLogin)
 			r.Post("/refresh", h.handleRefresh)
+			r.With(authx.AuthMiddleware(deps.JWT)).Patch("/me/roles", h.handlePatchMeRoles)
 		})
 	})
 }
@@ -79,11 +80,7 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, AuthResponseDTO{
 		AccessToken:  access,
 		RefreshToken: refresh,
-		User: UserDTO{
-			ID:    user.ID,
-			Email: user.Email,
-			Role:  string(user.Role),
-		},
+		User:         userToDTO(user),
 	})
 }
 
@@ -115,11 +112,7 @@ func (h *handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, AuthResponseDTO{
 		AccessToken:  access,
 		RefreshToken: refresh,
-		User: UserDTO{
-			ID:    user.ID,
-			Email: user.Email,
-			Role:  string(user.Role),
-		},
+		User:         userToDTO(user),
 	})
 }
 
@@ -151,12 +144,52 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, AuthResponseDTO{
 		AccessToken:  access,
 		RefreshToken: refresh,
-		User: UserDTO{
-			ID:    user.ID,
-			Email: user.Email,
-			Role:  string(user.Role),
-		},
+		User:         userToDTO(user),
 	})
+}
+
+// @Summary Request organizer role (pending until admin approves)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Param request body PatchMeRolesRequestDTO true "e.g. {\"roles\":[\"organizer\"]}"
+// @Success 200 {object} MeRolesResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 409 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /auth/me/roles [patch]
+func (h *handler) handlePatchMeRoles(w http.ResponseWriter, r *http.Request) {
+	var req PatchMeRolesRequestDTO
+	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
+		})
+		return
+	}
+
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	if err := h.svc.RequestOrganizerRole(r.Context(), userID, req.Roles); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	u, err := h.svc.UserByID(r.Context(), userID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, MeRolesResponseDTO{User: userToDTO(u)})
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
@@ -180,6 +213,22 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrRefreshTokenConsumed):
 		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "refresh_token_consumed", Message: "refresh token already used"},
+		})
+	case errors.Is(err, service.ErrOrganizerAlreadyActive):
+		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "organizer_already_active", Message: "organizer role is already active"},
+		})
+	case errors.Is(err, service.ErrOrganizerRequestNotAllowed):
+		_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "organizer_request_forbidden", Message: "only active students may request organizer role"},
+		})
+	case errors.Is(err, service.ErrOrganizerRequestInvalidBody):
+		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "invalid_request", Message: "request exactly {\"roles\":[\"organizer\"]}"},
+		})
+	case errors.Is(err, authrepo.ErrUserNotFound):
+		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "not_found", Message: "user not found"},
 		})
 	default:
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{

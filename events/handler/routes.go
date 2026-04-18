@@ -245,8 +245,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, ok := authx.RoleFromContext(r.Context())
-	if !ok {
+	if _, ok := authx.RoleFromContext(r.Context()); !ok {
 		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
 		})
@@ -274,7 +273,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if role == authx.RoleOrganizer {
+	if authx.HasRole(r.Context(), authx.RoleOrganizer) && !authx.HasRole(r.Context(), authx.RoleAdmin) {
 		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
 			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
 				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to modify this event"},
@@ -337,7 +336,7 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, ok := authx.RoleFromContext(r.Context())
+	_, ok := authx.RoleFromContext(r.Context())
 	if !ok {
 		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
@@ -366,7 +365,7 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if role == authx.RoleOrganizer {
+	if authx.HasRole(r.Context(), authx.RoleOrganizer) && !authx.HasRole(r.Context(), authx.RoleAdmin) {
 		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
 			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
 				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to delete this event"},

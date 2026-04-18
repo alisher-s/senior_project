@@ -6,7 +6,8 @@ After each code change to the backend, refresh the running backend (using Docker
 ## Database migrations (single happy-path schema)
 - **Source of truth:** `docker/postgres/migrations/*.sql` only. Files run in **lexicographic order** (`001_…`, `002_…`, …). Do not duplicate schema elsewhere.
 - **Docker:** `docker-compose` mounts that folder to `docker-entrypoint-initdb.d`. Scripts run **once**, when the Postgres data volume is first created. If you change SQL after a DB already exists, recreate the volume (`docker compose down -v`) or apply manually.
-- **CI / empty DB:** `bash scripts/apply-migrations.sh` (needs `psql`; set `POSTGRES_*` env vars if not using defaults).
+- **CI / existing DB:** `bash scripts/apply-migrations.sh` (needs `psql`). The script records applied files in table `schema_migrations` and skips them on re-run. Migrations are written to be idempotent where possible (`CREATE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, etc.).
+- **Host port:** Compose maps Postgres to **5432** and **5433** on the host. If `psql` fails with “role postgres does not exist” on the default port, another Postgres is bound to 5432—use `POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5433` (see `docker-compose.yml`).
 - **Repositories** (`*/repository`) must match these tables/columns; change migrations and code together in one change set when possible.
 - **Dev staff users (check-in / admin):** migration `006_dev_staff_users.sql` inserts `staff.admin@nu.edu.kz` (role `admin`) and `staff.organizer@nu.edu.kz` (role `organizer`). Shared password: `DevStaffPass1!`. For other accounts, an admin may call `PATCH /api/v1/admin/users/{id}/role` with body `{"role":"organizer"}` (or `admin` / `student`); all refresh tokens for that user are revoked so they must log in again.
 
