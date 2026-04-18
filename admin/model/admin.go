@@ -19,3 +19,13 @@ type AdminUserView struct {
 	CreatedAt time.Time
 }
 
+// ModerationLog is a persisted admin audit row from admin_moderation_logs.
+type ModerationLog struct {
+	ID          uuid.UUID
+	AdminUserID uuid.UUID
+	EventID     *uuid.UUID
+	Action      string
+	Reason      *string
+	CreatedAt   time.Time
+}
+

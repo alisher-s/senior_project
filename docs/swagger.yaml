@@ -145,6 +145,32 @@ definitions:
       moderation_status:
         type: string
     type: object
+  handler.ModerationLogEntryDTO:
+    properties:
+      action:
+        type: string
+      admin_user_id:
+        type: string
+      created_at:
+        type: string
+      event_id:
+        type: string
+      id:
+        type: string
+      reason:
+        type: string
+    type: object
+  handler.ModerationLogsResponseDTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.ModerationLogEntryDTO'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+    type: object
   handler.PaymentWebhookRequestDTO:
     properties:
       provider_ref:
@@ -356,6 +382,56 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Moderate event visibility (admin only)
+      tags:
+      - admin
+  /admin/moderation-logs:
+    get:
+      parameters:
+      - description: Bearer access token (admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Filter by event UUID
+        in: query
+        name: event_id
+        type: string
+      - description: Filter by acting admin user UUID
+        in: query
+        name: admin_id
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ModerationLogsResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List moderation audit logs (admin only)
       tags:
       - admin
   /admin/users/{id}/role:
