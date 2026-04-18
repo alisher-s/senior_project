@@ -15,5 +15,8 @@ type NotificationRepository interface {
 
 	// UpdateStatus marks the notification processing result.
 	UpdateStatus(ctx context.Context, id string, status model.NotificationStatus) error
+
+	// RequeueAfterFailure sets status back to queued with an incremented retry_count (SMTP retry path).
+	RequeueAfterFailure(ctx context.Context, id string, newRetryCount int) error
 }
 

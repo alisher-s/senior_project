@@ -30,6 +30,12 @@ services:
       AUTH_NU_EMAIL_DOMAIN: nu.edu.kz
       AUTH_BCRYPT_COST: 12
       PAYMENTS_WEBHOOK_SECRET: dev_payments_webhook_secret_change_me
+
+      # Notifications SMTP: set in shell or repo-root `.env` (gitignored). See `.env.example`.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_started

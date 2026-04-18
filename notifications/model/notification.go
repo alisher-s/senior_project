@@ -19,11 +19,12 @@ const (
 )
 
 type Notification struct {
-	ID        string
-	Type      NotificationType
-	To        string
-	Title     string
-	Body      string
-	CreatedAt time.Time
+	ID         string
+	Type       NotificationType
+	To         string
+	Title      string
+	Body       string
+	RetryCount int
+	CreatedAt  time.Time
 }
 

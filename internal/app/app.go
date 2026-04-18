@@ -56,7 +56,13 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 
 	// Notifications worker bootstrap (DB-backed queue); workerCtx is cancelled during API shutdown.
 	notificationsQueueRepo := notificationsRepo.NewPostgres(db)
-	notificationsWorker := notificationsService.NewEmailWorker(logger, notificationsQueueRepo, 20, 2*time.Second)
+	var emailSender notificationsService.Sender
+	if cfg.SMTP.Host != "" {
+		emailSender = notificationsService.NewSMTPSender(cfg)
+	} else {
+		emailSender = notificationsService.NoopSender{}
+	}
+	notificationsWorker := notificationsService.NewEmailWorker(logger, notificationsQueueRepo, emailSender, 20, 2*time.Second)
 	go notificationsWorker.Start(workerCtx)
 
 	r.Route("/api/v1", func(r chi.Router) {

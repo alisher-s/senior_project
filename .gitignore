@@ -1,3 +1,4 @@
+# Local secrets (never commit). Use tracked `.env.example` files as templates.
 .env
 *.env
 /bin/

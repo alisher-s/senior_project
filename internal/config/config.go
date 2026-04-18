@@ -59,6 +59,13 @@ type Config struct {
 		// WebhookSecret is used to verify payment provider webhooks (HMAC-SHA256 over raw request body).
 		WebhookSecret string
 	}
+
+	SMTP struct {
+		Host     string
+		Port     int
+		From     string
+		Password string
+	}
 }
 
 // Load forwards to LoadFromEnv (legacy name used by some entrypoints).
@@ -110,6 +117,12 @@ func LoadFromEnv() (Config, error) {
 
 	// Payments
 	cfg.Payments.WebhookSecret = getenvDefault("PAYMENTS_WEBHOOK_SECRET", "")
+
+	// SMTP (notifications email worker; optional in dev if unset — worker uses a no-op sender)
+	cfg.SMTP.Host = getenvDefault("SMTP_HOST", "")
+	cfg.SMTP.Port = getenvIntDefault("SMTP_PORT", 587)
+	cfg.SMTP.From = getenvDefault("SMTP_FROM", "")
+	cfg.SMTP.Password = getenvDefault("SMTP_PASSWORD", "")
 
 	// Basic validation for required secrets
 	if cfg.JWT.AccessSecret == "" && cfg.AppEnv == "development" {
