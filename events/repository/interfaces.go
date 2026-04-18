@@ -30,6 +30,7 @@ type EventFilter struct {
 type EventPatch struct {
 	Title             *string
 	Description       *string
+	CoverImageURL     *string
 	StartsAt          *time.Time
 	CapacityTotal     *int
 	Status            *model.EventStatus

@@ -27,6 +27,7 @@ type Event struct {
 	ID                  uuid.UUID
 	Title               string
 	Description         string
+	CoverImageURL       string
 	StartsAt            time.Time
 	CapacityTotal      int
 	CapacityAvailable  int

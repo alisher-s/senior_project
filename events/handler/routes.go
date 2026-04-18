@@ -74,7 +74,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.StartsAt, req.CapacityTotal, organizerID)
+	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, organizerID)
 	if err != nil {
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to create event"},
@@ -82,16 +82,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = httpx.WriteJSON(w, http.StatusCreated, EventDTO{
-		ID:                ev.ID.String(),
-		Title:             ev.Title,
-		Description:       ev.Description,
-		StartsAt:          ev.StartsAt,
-		CapacityTotal:     ev.CapacityTotal,
-		CapacityAvailable: ev.CapacityAvailable,
-		Status:            string(ev.Status),
-		ModerationStatus:  string(ev.ModerationStatus),
-	})
+	_ = httpx.WriteJSON(w, http.StatusCreated, eventToDTO(ev))
 }
 
 // @Summary List events
@@ -175,16 +166,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]EventDTO, 0, len(items))
 	for _, ev := range items {
-		resp = append(resp, EventDTO{
-			ID:                ev.ID.String(),
-			Title:             ev.Title,
-			Description:       ev.Description,
-			StartsAt:          ev.StartsAt,
-			CapacityTotal:     ev.CapacityTotal,
-			CapacityAvailable: ev.CapacityAvailable,
-			Status:            string(ev.Status),
-			ModerationStatus:  string(ev.ModerationStatus),
-		})
+		resp = append(resp, eventToDTO(ev))
 	}
 
 	_ = httpx.WriteJSON(w, http.StatusOK, ListEventsResponseDTO{
@@ -236,16 +218,7 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = httpx.WriteJSON(w, http.StatusOK, EventDTO{
-		ID:                ev.ID.String(),
-		Title:             ev.Title,
-		Description:       ev.Description,
-		StartsAt:          ev.StartsAt,
-		CapacityTotal:     ev.CapacityTotal,
-		CapacityAvailable: ev.CapacityAvailable,
-		Status:            string(ev.Status),
-		ModerationStatus:  string(ev.ModerationStatus),
-	})
+	_ = httpx.WriteJSON(w, http.StatusOK, eventToDTO(ev))
 }
 
 // @Summary Update event by ID
@@ -283,7 +256,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		statusPatch = &s
 	}
 
-	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.StartsAt, req.CapacityTotal, statusPatch)
+	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, statusPatch)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
@@ -297,16 +270,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = httpx.WriteJSON(w, http.StatusOK, EventDTO{
-		ID:                ev.ID.String(),
-		Title:             ev.Title,
-		Description:       ev.Description,
-		StartsAt:          ev.StartsAt,
-		CapacityTotal:     ev.CapacityTotal,
-		CapacityAvailable: ev.CapacityAvailable,
-		Status:            string(ev.Status),
-		ModerationStatus:  string(ev.ModerationStatus),
-	})
+	_ = httpx.WriteJSON(w, http.StatusOK, eventToDTO(ev))
 }
 
 // @Summary Delete event by ID
@@ -343,4 +307,18 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func eventToDTO(ev model.Event) EventDTO {
+	return EventDTO{
+		ID:                ev.ID.String(),
+		Title:             ev.Title,
+		Description:       ev.Description,
+		CoverImageURL:     ev.CoverImageURL,
+		StartsAt:          ev.StartsAt,
+		CapacityTotal:     ev.CapacityTotal,
+		CapacityAvailable: ev.CapacityAvailable,
+		Status:            string(ev.Status),
+		ModerationStatus:  string(ev.ModerationStatus),
+	}
 }

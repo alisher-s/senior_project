@@ -31,6 +31,10 @@ definitions:
         maximum: 100000
         minimum: 1
         type: integer
+      cover_image_url:
+        description: Optional HTTPS URL of the event cover image (hosted elsewhere).
+        maxLength: 2048
+        type: string
       description:
         maxLength: 2000
         type: string
@@ -51,6 +55,10 @@ definitions:
         type: integer
       capacity_total:
         type: integer
+      cover_image_url:
+        description: HTTPS URL of the cover image when set.
+        maxLength: 2048
+        type: string
       description:
         type: string
       id:
@@ -225,6 +233,10 @@ definitions:
         maximum: 100000
         minimum: 1
         type: integer
+      cover_image_url:
+        description: Set or clear the cover image URL (empty string removes it).
+        maxLength: 2048
+        type: string
       description:
         maxLength: 2000
         type: string

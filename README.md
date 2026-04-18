@@ -54,6 +54,7 @@
 
 - Тело запросов: **`Content-Type: application/json`**. Неизвестные поля JSON в ряде хендлеров отклоняются (`DisallowUnknownFields` / общий декодер).
 - **Даты событий:** поле **`starts_at`** в формате **RFC3339** (например `2026-01-01T10:00:00Z`).
+- **Обложка события (изображение):** опциональное поле **`cover_image_url`** — строка с **HTTPS URL** картинки. Сам файл на сервер API не загружается: хранится только ссылка (облако, CDN и т.п.), длина до **2048** символов. Задать можно при **`POST /api/v1/events`**, изменить при **`PUT /api/v1/events/{id}`**; чтобы **снять** обложку, в **PUT** передайте **`"cover_image_url": ""`**. В ответах поле **опускается**, если пустое (`omitempty`). Схема: миграция **`008_event_cover_image.sql`**.
 - Успешные ответы — JSON; структуры полей см. Swagger (`/api/v1/swagger/index.html`).
 
 ### Стандартное тело ошибки
@@ -124,10 +125,10 @@
 | POST | `/auth/register` | Нет | — | Регистрация (`email`, `password` ≥ 8, домен NU) |
 | POST | `/auth/login` | Нет | — | Вход |
 | POST | `/auth/refresh` | Нет | — | Обновление пары токенов |
-| POST | `/events/` | Bearer | `organizer`, `admin` | Создание события; стартовая **модерация** — `pending` |
+| POST | `/events/` | Bearer | `organizer`, `admin` | Создание события; опционально **`cover_image_url`**; стартовая **модерация** — `pending` |
 | GET | `/events/` | Нет | — | Список **только одобренных** (`moderation_status=approved`); query: `limit`, `offset`, `q`, `starts_after`, `starts_before` |
 | GET | `/events/{id}` | Нет | — | Карточка **только для одобренного** события; иначе 404 |
-| PUT | `/events/{id}` | Нет | — | Обновление (в т.ч. `status`: `draft` / `published` / `cancelled`) |
+| PUT | `/events/{id}` | Нет | — | Обновление полей, в т.ч. **`cover_image_url`** и `status`: `draft` / `published` / `cancelled` |
 | DELETE | `/events/{id}` | Нет | — | Удаление |
 | POST | `/tickets/register` | Bearer | `student` | Регистрация; см. поля QR выше |
 | POST | `/tickets/{id}/cancel` | Bearer | `student` | Отмена своего билета |
@@ -141,7 +142,7 @@
 
 Ответы `register` / `login` / `refresh` (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
 
-Событие в JSON содержит **`moderation_status`**: `pending` | `approved` | `rejected`.
+Событие в JSON содержит **`moderation_status`**: `pending` | `approved` | `rejected`. При заданной обложке в ответе присутствует **`cover_image_url`**.
 
 ---
 
@@ -166,7 +167,7 @@ Redis: по умолчанию **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_
 | Модуль | Статус |
 |--------|--------|
 | **auth** | Register / login / refresh, JWT |
-| **events** | CRUD; создание только organizer/admin; публичный список и GET — только **одобренные** события; модерация через admin API |
+| **events** | CRUD; опциональная **обложка** по полю `cover_image_url` (HTTPS URL); создание только organizer/admin; публичный список и GET — только **одобренные** события; модерация через admin API |
 | **ticketing** | Регистрация, QR, отмена; check-in — organizer/admin |
 | **payments** | Заглушка; возможны **501** |
 | **notifications** | Очередь и worker; HTTP может отвечать **501** |
@@ -223,7 +224,7 @@ curl -sS -X POST http://localhost:8080/api/v1/auth/login \
 curl -sS -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <organizer_or_admin_access_token>" \
-  -d '{"title":"NU Hackathon","description":"test event","starts_at":"2026-01-01T10:00:00Z","capacity_total":100}'
+  -d '{"title":"NU Hackathon","description":"test event","starts_at":"2026-01-01T10:00:00Z","capacity_total":100,"cover_image_url":"https://example.com/covers/hackathon.jpg"}'
 ```
 
 Одобрение события админом:

@@ -18,11 +18,12 @@ func New(repo repository.EventRepository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) Create(ctx context.Context, title, description string, startsAt time.Time, capacityTotal int, organizerID uuid.UUID) (model.Event, error) {
+func (s *Service) Create(ctx context.Context, title, description, coverImageURL string, startsAt time.Time, capacityTotal int, organizerID uuid.UUID) (model.Event, error) {
 	org := organizerID
 	e := model.Event{
 		Title:              title,
 		Description:       description,
+		CoverImageURL:     coverImageURL,
 		StartsAt:          startsAt,
 		CapacityTotal:     capacityTotal,
 		CapacityAvailable: capacityTotal,
@@ -44,10 +45,11 @@ func (s *Service) List(ctx context.Context, filter repository.EventFilter) ([]mo
 	return s.repo.List(ctx, filter)
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, startsAt *time.Time, capacityTotal *int, status *model.EventStatus) (model.Event, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, coverImageURL *string, startsAt *time.Time, capacityTotal *int, status *model.EventStatus) (model.Event, error) {
 	patch := repository.EventPatch{
 		Title:             title,
 		Description:       description,
+		CoverImageURL:     coverImageURL,
 		StartsAt:          startsAt,
 		CapacityTotal:     capacityTotal,
 		Status:            status,

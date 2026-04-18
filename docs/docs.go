@@ -1157,6 +1157,11 @@ const docTemplate = `{
                     "maximum": 100000,
                     "minimum": 1
                 },
+                "cover_image_url": {
+                    "description": "Optional HTTPS URL of the event cover image (hosted elsewhere).",
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "description": {
                     "type": "string",
                     "maxLength": 2000
@@ -1179,6 +1184,11 @@ const docTemplate = `{
                 },
                 "capacity_total": {
                     "type": "integer"
+                },
+                "cover_image_url": {
+                    "description": "HTTPS URL of the cover image when set.",
+                    "type": "string",
+                    "maxLength": 2048
                 },
                 "description": {
                     "type": "string"
@@ -1436,6 +1446,11 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 100000,
                     "minimum": 1
+                },
+                "cover_image_url": {
+                    "description": "Set or clear the cover image URL (empty string removes it).",
+                    "type": "string",
+                    "maxLength": 2048
                 },
                 "description": {
                     "type": "string",

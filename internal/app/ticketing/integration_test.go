@@ -50,6 +50,7 @@ type eventDTO struct {
 	ID                string    `json:"id"`
 	Title             string    `json:"title"`
 	Description       string    `json:"description"`
+	CoverImageURL     string    `json:"cover_image_url,omitempty"`
 	StartsAt          time.Time `json:"starts_at"`
 	CapacityTotal     int       `json:"capacity_total"`
 	CapacityAvailable int       `json:"capacity_available"`
