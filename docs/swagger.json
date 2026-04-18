@@ -244,7 +244,7 @@
         },
         "/analytics/events/stats": {
             "get": {
-                "description": "Requires a valid JWT; any authenticated role may call. Optional query event_id.",
+                "description": "Registration and capacity metrics for an event or aggregated for the caller. Organizers see only their events; admins see any event or global aggregates.",
                 "consumes": [
                     "application/json"
                 ],
@@ -254,18 +254,18 @@
                 "tags": [
                     "analytics"
                 ],
-                "summary": "Event statistics (stub)",
+                "summary": "Event statistics",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Bearer access token",
+                        "description": "Bearer access token (organizer or admin)",
                         "name": "Authorization",
                         "in": "header",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Filter by event UUID",
+                        "description": "Filter by event UUID; omit to aggregate events in scope",
                         "name": "event_id",
                         "in": "query"
                     }
@@ -277,20 +277,32 @@
                             "$ref": "#/definitions/handler.EventStatsResponseDTO"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal Server Error",
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
                     },
-                    "501": {
-                        "description": "Not Implemented",
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -1327,10 +1339,22 @@
                 "event_id": {
                     "type": "string"
                 },
-                "revenue": {
+                "registered_count": {
+                    "description": "Non-cancelled tickets (active + used) in scope for this response.",
                     "type": "integer"
                 },
-                "tickets": {
+                "registration_timeline": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.RegistrationHour"
+                    }
+                },
+                "remaining_capacity": {
+                    "description": "max(0, total_capacity − registered_count); same snapshot as other fields.",
+                    "type": "integer"
+                },
+                "total_capacity": {
+                    "description": "Event capacity_total, or sum across events in scope when aggregated.",
                     "type": "integer"
                 }
             }
@@ -1693,6 +1717,17 @@
             "properties": {
                 "error": {
                     "$ref": "#/definitions/httpx.ErrorBody"
+                }
+            }
+        },
+        "model.RegistrationHour": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "hour": {
+                    "type": "string"
                 }
             }
         }

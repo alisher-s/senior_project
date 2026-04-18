@@ -2,5 +2,7 @@ package service
 
 import "errors"
 
-var ErrNotImplemented = errors.New("not implemented")
-
+var (
+	ErrEventNotFound = errors.New("event not found")
+	ErrForbidden     = errors.New("forbidden")
+)

@@ -75,9 +75,18 @@ definitions:
         type: string
       event_id:
         type: string
-      revenue:
+      registered_count:
+        description: Non-cancelled tickets (active + used) in scope for this response.
         type: integer
-      tickets:
+      registration_timeline:
+        items:
+          $ref: '#/definitions/model.RegistrationHour'
+        type: array
+      remaining_capacity:
+        description: max(0, total_capacity − registered_count); same snapshot as other fields.
+        type: integer
+      total_capacity:
+        description: Event capacity_total, or sum across events in scope when aggregated.
         type: integer
     type: object
   handler.InitiatePaymentRequestDTO:
@@ -323,6 +332,13 @@ definitions:
       error:
         $ref: '#/definitions/httpx.ErrorBody'
     type: object
+  model.RegistrationHour:
+    properties:
+      count:
+        type: integer
+      hour:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -489,15 +505,16 @@ paths:
     get:
       consumes:
       - application/json
-      description: Requires a valid JWT; any authenticated role may call. Optional
-        query event_id.
+      description: Registration and capacity metrics for an event or aggregated for
+        the caller. Organizers see only their events; admins see any event or global
+        aggregates.
       parameters:
-      - description: Bearer access token
+      - description: Bearer access token (organizer or admin)
         in: header
         name: Authorization
         required: true
         type: string
-      - description: Filter by event UUID
+      - description: Filter by event UUID; omit to aggregate events in scope
         in: query
         name: event_id
         type: string
@@ -508,19 +525,27 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/handler.EventStatsResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "404":
+          description: Not Found
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
-        "501":
-          description: Not Implemented
-          schema:
-            $ref: '#/definitions/httpx.ErrorResponse'
-      summary: Event statistics (stub)
+      summary: Event statistics
       tags:
       - analytics
   /auth/login:

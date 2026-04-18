@@ -7,10 +7,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"log/slog"
 
+	"github.com/nu/student-event-ticketing-platform/analytics/repository"
 	"github.com/nu/student-event-ticketing-platform/analytics/service"
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
@@ -24,12 +26,15 @@ type Deps struct {
 }
 
 func RegisterRoutes(r chi.Router, deps Deps) {
-	_ = deps.DB
-	_ = deps.Redis
+	repo := repository.NewPostgres(deps.DB)
+	svc := service.New(repo, deps.Redis)
 
-	h := &handler{svc: service.New(), v: validator.New()}
+	h := &handler{svc: svc, v: validator.New(), log: deps.Logger}
 
-	r.With(authx.AuthMiddleware(deps.JWT)).Route("/analytics", func(r chi.Router) {
+	r.With(
+		authx.AuthMiddleware(deps.JWT),
+		authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin),
+	).Route("/analytics", func(r chi.Router) {
 		r.Get("/events/stats", h.handleEventStats)
 	})
 }
@@ -37,34 +42,69 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 type handler struct {
 	svc *service.Service
 	v   *validator.Validate
+	log *slog.Logger
 }
 
-// @Summary Event statistics (stub)
-// @Description Requires a valid JWT; any authenticated role may call. Optional query event_id.
+// @Summary Event statistics
+// @Description Registration and capacity metrics for an event or aggregated for the caller. Organizers see only their events; admins see any event or global aggregates.
 // @Tags analytics
 // @Accept json
 // @Produce json
-// @Param Authorization header string true "Bearer access token"
-// @Param event_id query string false "Filter by event UUID"
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
+// @Param event_id query string false "Filter by event UUID; omit to aggregate events in scope"
 // @Success 200 {object} EventStatsResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
 // @Failure 401 {object} httpx.ErrorResponse
-// @Failure 501 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 404 {object} httpx.ErrorResponse
 // @Failure 500 {object} httpx.ErrorResponse
 // @Router /analytics/events/stats [get]
 func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
-	eventIDParam := strings.TrimSpace(r.URL.Query().Get("event_id"))
-	var eventID *string
-	if eventIDParam != "" {
-		eventID = &eventIDParam
+	callerID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
 	}
+	role, ok := authx.RoleFromContext(r.Context())
+	if !ok {
+		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
+		})
+		return
+	}
+	isAdmin := role == authx.RoleAdmin
 
-	stats, err := h.svc.EventStats(r.Context(), eventID)
-	if err != nil {
-		if errors.Is(err, service.ErrNotImplemented) {
-			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_implemented", Message: "analytics not implemented yet"},
+	eventIDParam := strings.TrimSpace(r.URL.Query().Get("event_id"))
+	var eventID *uuid.UUID
+	if eventIDParam != "" {
+		id, err := uuid.Parse(eventIDParam)
+		if err != nil {
+			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid event_id"},
 			})
 			return
+		}
+		eventID = &id
+	}
+
+	stats, err := h.svc.EventStats(r.Context(), callerID, isAdmin, eventID)
+	if err != nil {
+		if errors.Is(err, service.ErrEventNotFound) {
+			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
+			})
+			return
+		}
+		if errors.Is(err, service.ErrForbidden) {
+			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
+				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to view stats for this event"},
+			})
+			return
+		}
+		if h.log != nil {
+			h.log.Error("analytics: event stats failed", "err", err)
 		}
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "analytics failed"},
