@@ -184,6 +184,30 @@ definitions:
       offset:
         type: integer
     type: object
+  handler.MyTicketItemDTO:
+    properties:
+      event_date:
+        description: EventDate is the event start time (RFC3339).
+        example: "2026-01-01T10:00:00Z"
+        type: string
+      event_id:
+        type: string
+      event_title:
+        type: string
+      qr_hash_hex:
+        type: string
+      status:
+        type: string
+      ticket_id:
+        type: string
+    type: object
+  handler.MyTicketsResponseDTO:
+    properties:
+      tickets:
+        items:
+          $ref: '#/definitions/handler.MyTicketItemDTO'
+        type: array
+    type: object
   handler.PatchMeRolesRequestDTO:
     properties:
       roles:
@@ -1139,6 +1163,34 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Cancel a ticket
+      tags:
+      - tickets
+  /tickets/my:
+    get:
+      description: Returns tickets for the authenticated user (user_id from JWT).
+        Empty `tickets` array if none.
+      parameters:
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.MyTicketsResponseDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List my tickets
       tags:
       - tickets
   /tickets/register:

@@ -32,3 +32,19 @@ type UseTicketResponseDTO struct {
 	UserID   string `json:"user_id"`
 	Status   string `json:"status"`
 }
+
+// MyTicketsResponseDTO lists the caller's tickets with basic event metadata.
+type MyTicketsResponseDTO struct {
+	Tickets []MyTicketItemDTO `json:"tickets"`
+}
+
+// MyTicketItemDTO combines ticket fields and event summary for list responses.
+type MyTicketItemDTO struct {
+	TicketID   string `json:"ticket_id"`
+	Status     string `json:"status"`
+	QRHashHex  string `json:"qr_hash_hex"`
+	EventID    string `json:"event_id"`
+	EventTitle string `json:"event_title"`
+	// EventDate is the event start time (RFC3339).
+	EventDate string `json:"event_date" example:"2026-01-01T10:00:00Z"`
+}

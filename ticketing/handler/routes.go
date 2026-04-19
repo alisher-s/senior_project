@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -34,6 +35,7 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	r.With(
 		authx.AuthMiddleware(deps.JWT),
 	).Route("/tickets", func(r chi.Router) {
+		r.Get("/my", h.handleMyTickets)
 		r.With(authx.RequireRole(authx.RoleStudent)).Post("/register", h.handleRegister)
 		r.With(authx.RequireRole(authx.RoleStudent)).Post("/{id}/cancel", h.handleCancel)
 		r.With(authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/use", h.handleUse)
@@ -44,6 +46,46 @@ type handler struct {
 	repo repository.TicketRepository
 	svc  *service.Service
 	v    *validator.Validate
+}
+
+// @Summary List my tickets
+// @Description Returns tickets for the authenticated user (user_id from JWT). Empty `tickets` array if none.
+// @Tags tickets
+// @Produce json
+// @Param Authorization header string true "Bearer access token"
+// @Success 200 {object} MyTicketsResponseDTO
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /tickets/my [get]
+func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
+		})
+		return
+	}
+
+	rows, err := h.svc.ListMyTickets(r.Context(), userID)
+	if err != nil {
+		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
+		})
+		return
+	}
+
+	items := make([]MyTicketItemDTO, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, MyTicketItemDTO{
+			TicketID:   row.ID.String(),
+			Status:     string(row.Status),
+			QRHashHex:  row.QRHashHex,
+			EventID:    row.EventID.String(),
+			EventTitle: row.EventTitle,
+			EventDate:  row.EventStartsAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, MyTicketsResponseDTO{Tickets: items})
 }
 
 // @Summary Register a ticket for an event

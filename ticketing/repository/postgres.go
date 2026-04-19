@@ -137,6 +137,47 @@ func (p *Postgres) GetByEventAndUser(ctx context.Context, eventID uuid.UUID, use
 	return t, nil
 }
 
+func (p *Postgres) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT t.id, t.event_id, t.user_id, t.status, t.qr_hash_hex, t.created_at,
+		       e.title, e.starts_at, e.location
+		FROM tickets t
+		INNER JOIN events e ON e.id = t.event_id
+		WHERE t.user_id = $1
+		ORDER BY e.starts_at ASC, t.created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.TicketWithEvent
+	for rows.Next() {
+		var row model.TicketWithEvent
+		if err := rows.Scan(
+			&row.ID,
+			&row.EventID,
+			&row.UserID,
+			&row.Status,
+			&row.QRHashHex,
+			&row.CreatedAt,
+			&row.EventTitle,
+			&row.EventStartsAt,
+			&row.EventLocation,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []model.TicketWithEvent{}
+	}
+	return out, nil
+}
+
 func (p *Postgres) CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error) {
 	// Transactional lifecycle update + deterministic capacity recomputation.
 	tx, err := p.pool.Begin(ctx)
@@ -348,6 +389,7 @@ func (p *Postgres) UseTicketByQRHash(ctx context.Context, qrHashHex string, now 
 var _ interface {
 	RegisterTicket(ctx context.Context, userID uuid.UUID, eventID uuid.UUID, qrHashHex string, now time.Time) (model.Ticket, error)
 	GetByEventAndUser(ctx context.Context, eventID uuid.UUID, userID uuid.UUID) (model.Ticket, error)
+	GetUserTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error)
 	CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error)
 	UseTicketByQRHash(ctx context.Context, qrHashHex string, now time.Time) (model.Ticket, error)
 } = (*Postgres)(nil)

@@ -1076,6 +1076,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/tickets/my": {
+            "get": {
+                "description": "Returns tickets for the authenticated user (user_id from JWT). Empty ` + "`" + `tickets` + "`" + ` array if none.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tickets"
+                ],
+                "summary": "List my tickets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer access token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.MyTicketsResponseDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/tickets/register": {
             "post": {
                 "description": "Requires student role. On success returns qr_png_base64 (PNG data URL–ready base64) and qr_hash_hex for check-in. 409 with code capacity_full or already_registered (and other business rules — see API error codes in README).",
@@ -1578,6 +1619,42 @@ const docTemplate = `{
                 },
                 "offset": {
                     "type": "integer"
+                }
+            }
+        },
+        "handler.MyTicketItemDTO": {
+            "type": "object",
+            "properties": {
+                "event_date": {
+                    "description": "EventDate is the event start time (RFC3339).",
+                    "type": "string",
+                    "example": "2026-01-01T10:00:00Z"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "qr_hash_hex": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.MyTicketsResponseDTO": {
+            "type": "object",
+            "properties": {
+                "tickets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.MyTicketItemDTO"
+                    }
                 }
             }
         },

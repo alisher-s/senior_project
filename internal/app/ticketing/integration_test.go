@@ -74,6 +74,17 @@ type useTicketResponse struct {
 	Status   string `json:"status"`
 }
 
+type myTicketsResponse struct {
+	Tickets []struct {
+		TicketID   string `json:"ticket_id"`
+		Status     string `json:"status"`
+		QRHashHex  string `json:"qr_hash_hex"`
+		EventID    string `json:"event_id"`
+		EventTitle string `json:"event_title"`
+		EventDate  string `json:"event_date"`
+	} `json:"tickets"`
+}
+
 var qrHashHexRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // TestFullLifecycleTicketing exercises register → duplicate → capacity → QR check-in over the real HTTP router, Postgres, and Redis.
@@ -201,6 +212,22 @@ func TestFullLifecycleTicketing(t *testing.T) {
 		t.Fatal("expected qr_png_base64")
 	}
 
+	myRes := getJSONExpect(t, base, "/api/v1/tickets/my", a1.AccessToken, http.StatusOK)
+	defer myRes.Body.Close()
+	var myList myTicketsResponse
+	if err := json.NewDecoder(myRes.Body).Decode(&myList); err != nil {
+		t.Fatalf("decode my tickets: %v", err)
+	}
+	if len(myList.Tickets) != 1 {
+		t.Fatalf("my tickets: want 1 item, got %d", len(myList.Tickets))
+	}
+	if myList.Tickets[0].TicketID != reg1.TicketID || myList.Tickets[0].EventID != eventID.String() {
+		t.Fatalf("my tickets mismatch: %+v vs ticket %+v", myList.Tickets[0], reg1)
+	}
+	if myList.Tickets[0].QRHashHex != reg1.QRHashHex {
+		t.Fatalf("my tickets qr_hash_hex: want %q got %q", reg1.QRHashHex, myList.Tickets[0].QRHashHex)
+	}
+
 	// Step 2: duplicate registration → 409
 	postJSONExpect(t, base, "/api/v1/tickets/register", a1.AccessToken, map[string]any{
 		"event_id": eventID.String(),
@@ -320,6 +347,25 @@ func postJSON(t *testing.T, base, path, bearer string, body any) *http.Response 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return res
+}
+
+func getJSONExpect(t *testing.T, base, path, bearer string, want int) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, base+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != want {
+		t.Fatalf("%s: want status %d, got %d", path, want, res.StatusCode)
 	}
 	return res
 }

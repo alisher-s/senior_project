@@ -23,3 +23,11 @@ type Ticket struct {
 	CreatedAt time.Time
 }
 
+// TicketWithEvent is a ticket plus basic event fields from a tickets↔events JOIN.
+type TicketWithEvent struct {
+	Ticket
+	EventTitle    string
+	EventStartsAt time.Time
+	EventLocation string
+}
+

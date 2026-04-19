@@ -78,3 +78,8 @@ func (s *Service) UseTicketByQRHash(ctx context.Context, qrHashHex string) (mode
 	return s.repo.UseTicketByQRHash(ctx, qrHashHex, now)
 }
 
+// ListMyTickets returns all tickets for the user with basic event info (empty slice if none).
+func (s *Service) ListMyTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
+	return s.repo.GetUserTickets(ctx, userID)
+}
+
