@@ -30,7 +30,11 @@ type Deps struct {
 func RegisterRoutes(r chi.Router, deps Deps) {
 	repo := repository.NewPostgres(deps.DB)
 	svc := service.New(repo)
-	h := &handler{repo: repo, svc: svc, v: validator.New()}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &handler{repo: repo, svc: svc, v: validator.New(), logger: logger}
 
 	r.With(
 		authx.AuthMiddleware(deps.JWT),
@@ -43,9 +47,10 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 }
 
 type handler struct {
-	repo repository.TicketRepository
-	svc  *service.Service
-	v    *validator.Validate
+	repo   repository.TicketRepository
+	svc    *service.Service
+	v      *validator.Validate
+	logger *slog.Logger
 }
 
 // @Summary List my tickets
@@ -68,6 +73,11 @@ func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.svc.ListMyTickets(r.Context(), userID)
 	if err != nil {
+		h.logger.Error("list_my_tickets_failed",
+			"error", err,
+			"request_id", httpx.GetRequestID(r),
+			"user_id", userID.String(),
+		)
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
 		})
