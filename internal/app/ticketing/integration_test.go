@@ -259,6 +259,134 @@ func TestFullLifecycleTicketing(t *testing.T) {
 	}
 }
 
+// TestReRegisterAfterCancel ensures a user can register again after cancelling (no stale UNIQUE row).
+func TestReRegisterAfterCancel(t *testing.T) {
+	applyIntegrationHostDefaults(t)
+	ctx := context.Background()
+
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		t.Skipf("config: %v", err)
+	}
+
+	pool, err := db.Connect(ctx, cfg)
+	if err != nil {
+		t.Skipf("postgres: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var one int
+	if err := pool.QueryRow(ctx, `SELECT 1 FROM events LIMIT 1`).Scan(&one); err != nil {
+		t.Skipf("schema/events missing: %v", err)
+	}
+	var userRolesOK bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'user_roles'
+		)
+	`).Scan(&userRolesOK); err != nil || !userRolesOK {
+		t.Skipf("user_roles table missing (apply docker/postgres/migrations/011_user_roles.sql): %v", err)
+	}
+
+	rdb, err := redis.Connect(ctx, cfg)
+	if err != nil {
+		t.Skipf("redis: %v", err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	logger := slog.Default()
+	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx))
+	t.Cleanup(srv.Close)
+	base := strings.TrimRight(srv.URL, "/")
+
+	suffix := uuid.NewString()
+	studentEmail := "stu_cancel_" + suffix + "@nu.edu.kz"
+	orgEmail := "org_cancel_" + suffix + "@nu.edu.kz"
+	password := "TestPass1!long"
+
+	var eventID uuid.UUID
+	var studentID, orgID uuid.UUID
+
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if eventID != (uuid.UUID{}) {
+			_, _ = pool.Exec(cctx, `DELETE FROM tickets WHERE event_id = $1`, eventID)
+			_, _ = pool.Exec(cctx, `DELETE FROM events WHERE id = $1`, eventID)
+		}
+		for _, id := range []uuid.UUID{studentID, orgID} {
+			if id == (uuid.UUID{}) {
+				continue
+			}
+			_, _ = pool.Exec(cctx, `DELETE FROM users WHERE id = $1`, id)
+		}
+	})
+
+	a1 := mustRegister(t, base, studentEmail, password)
+	studentID = a1.User.ID
+	aOrg := mustRegister(t, base, orgEmail, password)
+	orgID = aOrg.User.ID
+
+	_, err = pool.Exec(ctx, `UPDATE users SET role = 'organizer' WHERE id = $1`, orgID)
+	if err != nil {
+		t.Fatalf("promote organizer: %v", err)
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (admin cleanup): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'student', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (student): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'organizer', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (organizer): %v", err)
+	}
+
+	orgLogin := mustLogin(t, base, orgEmail, password)
+	if orgLogin.User.Role != "organizer" {
+		t.Fatalf("expected organizer role after update, got %q", orgLogin.User.Role)
+	}
+
+	starts := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	ev := mustCreateEvent(t, base, orgLogin.AccessToken, "cancel_rereg_"+suffix, "d", starts, 2)
+	eventID = uuid.MustParse(ev.ID)
+	_, err = pool.Exec(ctx, `UPDATE events SET moderation_status = 'approved' WHERE id = $1`, eventID)
+	if err != nil {
+		t.Fatalf("approve event for ticketing: %v", err)
+	}
+
+	reg1 := mustRegisterTicket(t, base, a1.AccessToken, eventID.String())
+	cancelPath := "/api/v1/tickets/" + reg1.TicketID + "/cancel"
+	postJSONExpect(t, base, cancelPath, a1.AccessToken, map[string]any{}, http.StatusOK)
+
+	reg2 := mustRegisterTicket(t, base, a1.AccessToken, eventID.String())
+	if reg2.TicketID == reg1.TicketID {
+		t.Fatalf("expected new ticket id after cancel+register, got same %s", reg1.TicketID)
+	}
+
+	myRes := getJSONExpect(t, base, "/api/v1/tickets/my", a1.AccessToken, http.StatusOK)
+	defer myRes.Body.Close()
+	var myList myTicketsResponse
+	if err := json.NewDecoder(myRes.Body).Decode(&myList); err != nil {
+		t.Fatalf("decode my tickets: %v", err)
+	}
+	if len(myList.Tickets) != 1 {
+		t.Fatalf("my tickets: want 1 active item, got %d", len(myList.Tickets))
+	}
+	if myList.Tickets[0].TicketID != reg2.TicketID {
+		t.Fatalf("my tickets: want ticket %s, got %s", reg2.TicketID, myList.Tickets[0].TicketID)
+	}
+}
+
 func mustRegister(t *testing.T, base, email, password string) authResponse {
 	t.Helper()
 	res := postJSON(t, base, "/api/v1/auth/register", "", map[string]any{

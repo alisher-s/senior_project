@@ -84,13 +84,13 @@ func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID
 		return model.Ticket{}, ErrCapacityFull
 	}
 
-	// Insert ticket. Duplicate (event_id, user_id) rolls the transaction back and restores capacity.
+	// Insert ticket. Conflict only if another active/used row exists (see partial unique index).
 	ticketID := uuid.New()
 	var t model.Ticket
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tickets (id, event_id, user_id, status, qr_hash_hex, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (event_id, user_id) DO NOTHING
+		ON CONFLICT (event_id, user_id) WHERE (status IN ('active', 'used')) DO NOTHING
 		RETURNING id, event_id, user_id, status, qr_hash_hex, created_at
 	`, ticketID, eventID, userID, model.TicketStatusActive, qrHashHex, now).Scan(
 		&t.ID,
@@ -119,7 +119,7 @@ func (p *Postgres) GetByEventAndUser(ctx context.Context, eventID uuid.UUID, use
 	err := p.pool.QueryRow(ctx, `
 		SELECT id, event_id, user_id, status, qr_hash_hex, created_at
 		FROM tickets
-		WHERE event_id = $1 AND user_id = $2
+		WHERE event_id = $1 AND user_id = $2 AND status IN ('active', 'used')
 	`, eventID, userID).Scan(
 		&t.ID,
 		&t.EventID,
@@ -143,7 +143,7 @@ func (p *Postgres) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]mode
 		       e.title, e.starts_at, e.location
 		FROM tickets t
 		INNER JOIN events e ON e.id = t.event_id
-		WHERE t.user_id = $1
+		WHERE t.user_id = $1 AND t.status IN ('active', 'used')
 		ORDER BY e.starts_at ASC, t.created_at DESC
 	`, userID)
 	if err != nil {
