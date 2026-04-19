@@ -1,63 +1,689 @@
-# Student Event Ticketing Platform (NU) — backend
+# Student Event Ticketing Platform — Backend API
 
-Модульный монолит на Go: домены `auth`, `events`, `ticketing`, `payments`, `notifications`, `admin`, `analytics`. Маршруты HTTP монтируются в **`internal/app/app.go`** под префиксом **`/api/v1`** (отдельного пакета `internal/api/v1` в репозитории нет; контракты описаны в Swagger и ниже).
+## Quick start (local development)
+
+1. **Clone the repository**
+
+```bash
+git clone <your-repo-url> senior_project
+cd senior_project
+```
+
+2. **Environment file**
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` if you need SMTP for outbound email (optional in local dev). Docker Compose also reads variables from this file for the `api` service.
+
+3. **Start the stack**
+
+```bash
+docker compose up --build
+```
+
+This builds the API image, starts **api** (port **8080**), **postgres**, and **redis**.
+
+4. **Verify the API**
+
+```bash
+curl -sS http://localhost:8080/api/v1/healthz
+```
+
+Expected JSON: `{"status":"ok"}`.
+
+5. **Check Postgres and Redis**
+
+```bash
+docker compose ps
+```
+
+You should see `postgres`, `redis`, and `api` running. Ports on the host:
+
+- **PostgreSQL:** `localhost:5432` (and `localhost:5433` maps to the same container for tools that need an alternate host port)
+- **Redis:** `localhost:6379`
+
+Optional connectivity checks:
+
+```bash
+nc -zv localhost 5432
+nc -zv localhost 6379
+```
+
+6. **Swagger UI**
+
+Open: **http://localhost:8080/api/v1/swagger/index.html**
 
 ---
 
-## Базовый URL, порты и префикс API
+## Environment variables
 
-| Сервис | Адрес (локально) | Примечание |
-|--------|------------------|------------|
-| **HTTP API** | **`http://localhost:8080`** | Префикс маршрутов: **`/api/v1`** |
-| PostgreSQL (Docker, основной маппинг) | `localhost:5432` | `5432:5432` в `docker-compose.yml` |
-| **PostgreSQL (хост, для локальных тестов / `psql`, если `:5432` занят)** | **`localhost:5433`** | Доп. маппинг **`5433:5432`** на тот же контейнер |
-| Redis | `localhost:6379` | Rate limiting |
+Variables are loaded from the process environment (e.g. `.env` with Docker Compose, or your shell for `go run`). Defaults below match `internal/config/config.go`.
 
-Пример: проверка живости — `GET /api/v1/healthz`.
+### Server
 
-**Мобильное приложение на реальном устройстве:** подставьте IP вашей машины в локальной сети вместо `localhost` (например `http://192.168.1.10:8080`), при условии что API запущен и порт `8080` доступен с телефона.
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `APP_ENV` | No | `development` | Environment name. In `development`, empty JWT/payment webhook secrets get safe dev defaults. |
+| `PORT` | No | `8080` | HTTP listen port (server binds to `:{PORT}`). |
+| `SERVER_READ_TIMEOUT` | No | `10s` | Server read timeout (Go duration string). |
+| `SERVER_WRITE_TIMEOUT` | No | `10s` | Server write timeout. |
+| `SERVER_IDLE_TIMEOUT` | No | `60s` | Server idle timeout. |
 
-**CORS:** для локальной разработки фронта разрешены origin `http://localhost:3000` и `http://localhost:5173` (см. `internal/infra/http/middleware.go`). Другие origin по-прежнему не проходят без доработки списка.
+### Database
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `POSTGRES_HOST` | No | `postgres` | Postgres hostname (use `localhost` when running the API on the host). |
+| `POSTGRES_PORT` | No | `5432` | Postgres port. |
+| `POSTGRES_USER` | No | `postgres` | Database user. |
+| `POSTGRES_PASSWORD` | No | `postgres` | Database password. |
+| `POSTGRES_DB` | No | `app` | Database name. |
+| `POSTGRES_SSLMODE` | No | `disable` | Passed to the Postgres driver (use `disable` locally). |
+
+### Redis
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `REDIS_HOST` | No | `redis` | Redis hostname (use `localhost` when running the API on the host). |
+| `REDIS_PORT` | No | `6379` | Redis port. |
+| `REDIS_PASSWORD` | No | *(empty)* | Redis password, if configured. |
+| `REDIS_DB` | No | `0` | Redis logical DB index. |
+
+### Auth
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JWT_ACCESS_SECRET` | Yes (unless `APP_ENV=development` with empty value) | *(empty; dev default applied)* | HMAC secret for access tokens. |
+| `JWT_REFRESH_SECRET` | Yes (unless `APP_ENV=development` with empty value) | *(empty; dev default applied)* | HMAC secret for refresh tokens. |
+| `JWT_ACCESS_TTL` | No | `15m` | Access token lifetime (Go duration, e.g. `15m`). |
+| `JWT_REFRESH_TTL` | No | `720h` | Refresh token lifetime (default 30 days). |
+| `JWT_ISSUER` | No | `nu-ticketing` | JWT `iss` claim. |
+| `JWT_AUDIENCE` | No | `nu-ticketing-client` | JWT `aud` claim. |
+| `AUTH_NU_EMAIL_DOMAIN` | No | `nu.edu.kz` | Allowed email domain for `POST /auth/register`. |
+| `AUTH_BCRYPT_COST` | No | `12` | Bcrypt cost for password hashing (minimum 4). |
+| `RATE_LIMIT_REQUESTS` | No | `120` | Max requests per client per route window before **429**. |
+| `RATE_LIMIT_WINDOW_SECONDS` | No | `60` | Sliding window length in seconds for rate limiting. |
+
+### SMTP
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SMTP_HOST` | No | *(empty)* | SMTP server host; if empty, the email worker uses a no-op sender. |
+| `SMTP_PORT` | No | `587` | SMTP port. |
+| `SMTP_FROM` | No | *(empty)* | From address for outbound mail. |
+| `SMTP_PASSWORD` | No | *(empty)* | SMTP password. |
+
+### Payments
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PAYMENTS_WEBHOOK_SECRET` | Yes (unless `APP_ENV=development` with empty value) | *(empty; dev default applied)* | Shared secret for **HMAC-SHA256** verification of `POST /payments/webhook` bodies (`X-Signature`). |
 
 ---
 
-## Роли и права (MVP P2)
+## Authentication
 
-| Роль | Назначение | Регистрация / просмотр | Создание событий / сканирование QR | Модерация / аналитика |
-|------|------------|------------------------|-------------------------------------|-------------------------|
-| **student** | Участник | `POST /auth/register`, `POST /auth/login`, список и карточка **одобренных** событий, `POST /tickets/register`, отмена своего билета | — | — |
-| **organizer** | Организатор | Как student | `POST /events`, `PUT`/`DELETE` **своих** событий, `POST /tickets/use` (check-in по `qr_hash_hex`), `GET /analytics/events/stats` (только свои события) | — |
-| **admin** | Администратор | Как organizer (в т.ч. события и check-in) | Без ограничения «только свои» для правок событий | `POST /admin/events/{id}/moderate`, `PATCH /admin/users/{id}/role`, `GET /admin/moderation-logs`, `GET /analytics/events/stats` (любые события) |
+The API uses **JWT access tokens** in the `Authorization` header and **refresh tokens** stored server-side (identified by `jti` inside the JWT). Access and refresh tokens use different signing secrets.
 
-Защита маршрутов: JWT в заголовке `Authorization: Bearer <access_token>`. **401 Unauthorized** — нет или невалидный JWT (`missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims`, `invalid_credentials`, …). **403 Forbidden** — токен принят, но роль или правило не позволяют операцию (`forbidden`, `organizer_request_forbidden`, …). **409 Conflict** — конфликт доменной логики (например `already_registered`, `capacity_full` — см. таблицу ниже).
+### 1. Register — `POST /api/v1/auth/register`
 
-Публичная регистрация выдаёт только роль **`student`**. Учётки staff для dev: см. миграцию `006_dev_staff_users.sql` и раздел ниже.
+**Request body (JSON):**
+
+| Field | Type | Required | Rules |
+|-------|------|----------|--------|
+| `email` | string | Yes | Valid email ending with `@` + `AUTH_NU_EMAIL_DOMAIN` (default `nu.edu.kz`). |
+| `password` | string | Yes | Length 8–72. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
+```
+
+**Success: HTTP 201** — body shape:
+
+```json
+{
+  "access_token": "<jwt>",
+  "refresh_token": "<jwt>",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "student@nu.edu.kz",
+    "role": "student",
+    "roles": ["student"]
+  }
+}
+```
+
+(`pending_roles` may appear when organizer approval is pending.)
+
+**Errors:** **400** `invalid_request`; **409** `email_exists`; **400** `email_not_allowed`.
+
+### 2. Login — `POST /api/v1/auth/login`
+
+Same request fields as register.
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
+```
+
+**Success: HTTP 200** — same `AuthResponseDTO` shape as register (`access_token`, `refresh_token`, `user`).
+
+**Errors:** **401** `invalid_credentials`.
+
+### 3. Using the access token
+
+Send on every protected request:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Example:
+
+```bash
+curl -sS http://localhost:8080/api/v1/tickets/my \
+  -H "Authorization: Bearer <access_token>"
+```
+
+### 4. Refresh — `POST /api/v1/auth/refresh`
+
+**Request body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `refresh_token` | string | Yes |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token":"<refresh_token_from_login_or_register>"}'
+```
+
+**Success: HTTP 200** — new `access_token` and **new** `refresh_token` (`user` included).
+
+**Refresh token semantics:** each refresh token can be used **once**. The server **consumes** the old refresh token (`jti`) and issues a new refresh token. Reusing the same refresh token returns **401** with `refresh_token_consumed`.
+
+### 5. Token expiry
+
+| Token | TTL (default) | Source |
+|-------|----------------|--------|
+| Access | **15 minutes** | `JWT_ACCESS_TTL` (default `15m` in `internal/config/config.go`) |
+| Refresh | **30 days** | `JWT_REFRESH_TTL` (default `720h`) |
+
+### Roles
+
+| Role | Meaning |
+|------|---------|
+| `student` | Default role from registration; can browse approved events, register/cancel own tickets. |
+| `organizer` | Can create/update/delete own events (subject to rules), scan QR at check-in, view analytics for own events. |
+| `admin` | Full moderation and user role management; can moderate any event; analytics for all events. |
+
+**What each role can do (simplified):**
+
+| Capability | student | organizer | admin |
+|------------|---------|-----------|-------|
+| Register / login / refresh | Yes | Yes | Yes |
+| `GET /events`, `GET /events/{id}` (approved only) | Yes | Yes | Yes |
+| `POST /events`, `PUT/DELETE /events/{id}` | No | Own events only | Any event |
+| `POST /tickets/register`, cancel own ticket | Yes | No* | No* |
+| `POST /tickets/use` (QR check-in) | No | Yes | Yes |
+| `POST /admin/...`, `GET /admin/moderation-logs` | No | No | Yes |
+| `PATCH /admin/users/{id}/role` | No | No | Yes |
+| `GET /analytics/events/stats` | No | Own events | All events |
+| Request organizer via `PATCH /auth/me/roles` | Yes (`{"roles":["organizer"]}`) | N/A | N/A |
+
+\*Organizer/admin accounts are not intended to use student-only ticket routes; middleware requires role `student` for registration.
 
 ---
 
-## Аутентификация
+## API reference
 
-- **Тип:** JWT — `Authorization: Bearer <access_token>`.
-- **Пара access / refresh:** после `register` / `login` приходят `access_token` и `refresh_token`; refresh — для `POST /api/v1/auth/refresh` (тело: `{"refresh_token":"..."}`).
-- **TTL (по умолчанию):** access — 15 минут, refresh — 30 суток (`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL` в `config/.env.example`).
-- **Регистрация:** `POST /api/v1/auth/register` — email в домене `AUTH_NU_EMAIL_DOMAIN` (по умолчанию `nu.edu.kz`). Новым пользователям назначается роль **`student`**.
-- **Роли в токене:** строки `student`, `organizer`, `admin` (см. `user.role` в ответе auth).
+Unless noted, send `Content-Type: application/json`. Base URL: `http://localhost:{PORT}/api/v1` (default port **8080**).
 
-**Как получить `organizer` / `admin` (не через register):**
+### Auth endpoints
 
-1. **Сид в миграциях:** `docker/postgres/migrations/006_dev_staff_users.sql` — `staff.organizer@nu.edu.kz`, `staff.admin@nu.edu.kz`, пароль **`DevStaffPass1!`**.
-2. **Админский API:** `PATCH /api/v1/admin/users/{id}/role` с телом `{"role":"organizer"|"admin"|"student"}`. После смены роли **отзываются все refresh-токены** — нужен повторный `login`.
+#### `POST /api/v1/auth/register`
+
+| | |
+|--|--|
+| **Auth** | No |
+| **Request body** | See [Register](#1-register--post-apiv1authregister) — `email` (string, required), `password` (string, required, min 8). |
+| **Success** | **201** — `access_token`, `refresh_token`, `user` (see Authentication). |
+| **Errors** | **400** invalid JSON/validation (`invalid_request`); **400** `email_not_allowed`; **409** `email_exists`; **500** `internal_error`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"newuser@nu.edu.kz","password":"verystrongpassword"}'
+```
+
+#### `POST /api/v1/auth/login`
+
+| | |
+|--|--|
+| **Auth** | No |
+| **Request body** | `email` (string, required), `password` (string, required, min 8). |
+| **Success** | **200** — same as register. |
+| **Errors** | **400** `invalid_request`; **401** `invalid_credentials`; **500** `internal_error`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
+```
+
+#### `POST /api/v1/auth/refresh`
+
+| | |
+|--|--|
+| **Auth** | No |
+| **Request body** | `refresh_token` (string, required). |
+| **Success** | **200** — new `access_token`, `refresh_token`, `user`. |
+| **Errors** | **400** `invalid_request`; **401** `invalid_refresh_token` or `refresh_token_consumed`; **500** `internal_error`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token":"<paste_refresh_token>"}'
+```
+
+#### `PATCH /api/v1/auth/me/roles` (organizer request)
+
+| | |
+|--|--|
+| **Auth** | Yes — Bearer access token |
+| **Roles** | Active **student** (must send exactly `{"roles":["organizer"]}`) |
+| **Request body** | `roles` (array of strings, required) — must be exactly `["organizer"]`. |
+| **Success** | **200** — `{ "user": { ... } }` |
+| **Errors** | **400** `invalid_request`; **403** `organizer_request_forbidden`; **409** `organizer_already_active`; **401** JWT errors. |
 
 ---
 
-## Формат тел запросов, дат и ошибок
+### Event endpoints
 
-- Тело запросов: **`Content-Type: application/json`**. Неизвестные поля JSON в ряде хендлеров отклоняются (`DisallowUnknownFields` / общий декодер).
-- **Даты событий:** поле **`starts_at`** в формате **RFC3339** (например `2026-01-01T10:00:00Z`).
-- **Обложка события (изображение):** опциональное поле **`cover_image_url`** — строка с **HTTPS URL** картинки. Сам файл на сервер API не загружается: хранится только ссылка (облако, CDN и т.п.), длина до **2048** символов. Задать можно при **`POST /api/v1/events`**, изменить при **`PUT /api/v1/events/{id}`**; чтобы **снять** обложку, в **PUT** передайте **`"cover_image_url": ""`**. В ответах поле **опускается**, если пустое (`omitempty`). Схема: миграция **`008_event_cover_image.sql`**.
-- Успешные ответы — JSON; структуры полей см. Swagger (`/api/v1/swagger/index.html`).
+#### `GET /api/v1/events`
 
-### Стандартное тело ошибки
+| | |
+|--|--|
+| **Auth** | No |
+| **Query parameters** | See below |
+| **Success** | **200** — `{ "items": [ EventDTO ... ], "limit": int, "offset": int }` |
+
+**Query parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `q` | string | No | Case-insensitive substring match on **`title`** only (`ILIKE`). |
+| `limit` | integer | No | Page size; **default 20** if omitted or invalid low; must be **1–100** if provided. |
+| `offset` | integer | No | Offset; default **0**; must be **0–100000** if provided. |
+| `starts_after` | string (RFC3339) | No | Only events with `starts_at` **after** this instant. |
+| `starts_before` | string (RFC3339) | No | Only events with `starts_at` **before or equal** to this instant. |
+
+Invalid `limit`/`offset` or invalid RFC3339 dates → **400** `invalid_request`.
+
+**Note:** Only events with **`moderation_status=approved`** are returned.
+
+```bash
+curl -sS "http://localhost:8080/api/v1/events?limit=10&offset=0&q=hackathon&starts_after=2026-01-01T00:00:00Z"
+```
+
+#### `POST /api/v1/events`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `organizer`, `admin` |
+| **Request body** | `title` (string, required, 3–120), `description` (string, max 2000), `cover_image_url` (string, optional, max 2048), `starts_at` (string/time, RFC3339, required), `capacity_total` (integer, required, 1–100000). |
+| **Success** | **201** — `EventDTO` |
+| **Errors** | **401** / **403**; **400** `invalid_request`; **500** `internal_error`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/events \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <organizer_access_token>" \
+  -d '{"title":"NU Hackathon","description":"Annual hackathon","starts_at":"2026-06-01T10:00:00Z","capacity_total":100,"cover_image_url":"https://example.com/cover.jpg"}'
+```
+
+#### `GET /api/v1/events/{id}`
+
+| | |
+|--|--|
+| **Auth** | No |
+| **Success** | **200** — `EventDTO` |
+| **Errors** | **400** `invalid_id`; **404** `not_found` if missing or **not approved** for public view. |
+
+```bash
+curl -sS "http://localhost:8080/api/v1/events/550e8400-e29b-41d4-a716-446655440000"
+```
+
+#### `PUT /api/v1/events/{id}`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `organizer` (own event only), `admin` (any) |
+| **Request body** | All optional: `title`, `description`, `cover_image_url` (use `""` to clear cover), `starts_at`, `capacity_total`, `status` (`draft` \| `published` \| `cancelled`). |
+| **Success** | **200** — `EventDTO` |
+| **Errors** | **403** `forbidden`; **404** `not_found`; **400** `invalid_request`. |
+
+```bash
+curl -sS -X PUT http://localhost:8080/api/v1/events/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <organizer_access_token>" \
+  -d '{"title":"NU Hackathon 2026","status":"published"}'
+```
+
+#### `DELETE /api/v1/events/{id}`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `organizer` (own), `admin` (any) |
+| **Success** | **204** No Content |
+| **Errors** | **403**; **404**; **500**. |
+
+```bash
+curl -sS -X DELETE http://localhost:8080/api/v1/events/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer <organizer_access_token>"
+```
+
+---
+
+### Ticketing endpoints
+
+#### `GET /api/v1/tickets/my`
+
+| | |
+|--|--|
+| **Auth** | Yes (any authenticated user) |
+| **Success** | **200** — `{ "tickets": [ { "ticket_id", "status", "qr_hash_hex", "event_id", "event_title", "event_date" } ] }` |
+| **Errors** | **401**. |
+
+```bash
+curl -sS http://localhost:8080/api/v1/tickets/my \
+  -H "Authorization: Bearer <access_token>"
+```
+
+#### `POST /api/v1/tickets/register`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `student` |
+| **Request body** | `event_id` (string UUID, required). |
+| **Success** | **201** — `ticket_id`, `event_id`, `user_id`, `status`, `qr_png_base64`, `qr_hash_hex` |
+| **Errors** | **400**; **404** `not_found`; **409** `capacity_full`, `already_registered`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, etc. |
+
+**QR flow:**
+
+- **`qr_hash_hex`:** SHA-256 of the ticket’s random **payload**, written as lowercase **hex** (64 characters). The database stores **only this hash**, not the payload.
+- **`qr_png_base64`:** Standard Base64-encoded PNG (no `data:image/png;base64,` prefix). The QR image encodes the **payload string** (not the hash).
+
+**Organizer scan:** read the **payload** from the QR (the same string that was hashed at issuance), compute **SHA-256 → hex**, and send that value as `qr_hash_hex` in `POST /tickets/use`. You can also send the `qr_hash_hex` returned by `POST /tickets/register` if the attendee app displays it or your client stored it (it must match the DB row).
+
+Then call:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/tickets/use \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <organizer_access_token>" \
+  -d '{"qr_hash_hex":"<64-char-hex-or-value-from-register>"}'
+```
+
+#### `POST /api/v1/tickets/{id}/cancel`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `student` |
+| **Path** | `id` — ticket UUID |
+| **Success** | **200** — `ticket_id`, `event_id`, `user_id`, `status` |
+| **Errors** | **409** `ticket_already_cancelled`, `cancellation_not_allowed`; **404**; **401**. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/tickets/550e8400-e29b-41d4-a716-446655440000/cancel \
+  -H "Authorization: Bearer <student_access_token>"
+```
+
+#### `POST /api/v1/tickets/use`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `organizer`, `admin` |
+| **Request body** | `qr_hash_hex` (string, required). |
+| **Success** | **200** — `ticket_id`, `event_id`, `user_id`, `status` (`used`) |
+| **Errors** | **404** `ticket_not_found`; **409** `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, etc. |
+
+---
+
+### Payment endpoints
+
+> **Important:** The payment **repository is currently a stub**. `POST /payments/initiate` and `POST /payments/webhook` return **501 Not Implemented** with `error.code` **`not_implemented`** until a real payment backend is wired. Do not treat these as production-ready.
+
+#### `POST /api/v1/payments/initiate`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `student`, `organizer`, `admin` |
+| **Request body** | `event_id` (string, required), `amount` (integer, required, `> 0`), `currency` (string, required, exactly 3 letters). |
+| **Success** | **201** — `payment_id`, `provider_ref`, `provider_url` *(when implemented)* |
+| **Errors** | **501** `not_implemented` *(current stub)*; **400**; **401**; **500**. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/payments/initiate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"event_id":"550e8400-e29b-41d4-a716-446655440000","amount":1000,"currency":"KZT"}'
+```
+
+**Intended flow (when payments are enabled):** for paid events, clients would register for an event, call initiate, open `payment_url`, and the provider would call the webhook; on success, ticketing would issue the ticket and QR. **Today:** ticket registration does not depend on this stub; **`POST /tickets/register`** issues a ticket with status **`active`** and QR when business rules pass. There is **no** separate `pending_payment` ticket status in the API schema.
+
+#### `POST /api/v1/payments/webhook`
+
+| | |
+|--|--|
+| **Auth** | No (provider callback; not for browsers) |
+| **Headers** | **`X-Signature`**: hex-encoded **HMAC-SHA256** of the **raw** request body using `PAYMENTS_WEBHOOK_SECRET`. |
+| **Request body** | `provider_ref` (string, required), `status` (string, required). |
+| **Success** | **200** — `{}` |
+| **Errors** | **401** `missing_signature`; **403** `invalid_signature`; **404** `not_found`; **501** `not_implemented` *(stub)*; **400** `invalid_request`. |
+
+```bash
+BODY='{"provider_ref":"ref-123","status":"succeeded"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "dev_payments_webhook_secret_change_me" -binary | xxd -p -c 256)
+curl -sS -X POST http://localhost:8080/api/v1/payments/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Signature: $SIG" \
+  -d "$BODY"
+```
+
+---
+
+### Notification endpoints
+
+#### `POST /api/v1/notifications/send-email`
+
+| | |
+|--|--|
+| **Auth** | No |
+| **Request body** | `to` (email, required), `title` (string, 3–200 chars), `body` (string, 1–5000 chars). |
+| **Success** | **202** Accepted (email enqueued; empty body) |
+| **Errors** | **400** `invalid_request`; **500** `internal_error`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/notifications/send-email \
+  -H "Content-Type: application/json" \
+  -d '{"to":"user@nu.edu.kz","title":"Hello","body":"Queued notification body."}'
+```
+
+---
+
+### Admin endpoints
+
+#### `POST /api/v1/admin/events/{id}/moderate`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `admin` |
+| **Request body** | `action` (string, required): `approve` or `reject`; `reason` (string, optional, max 2000). |
+| **Success** | **200** — `{ "moderation_status": "approved" | "rejected" }` |
+| **Errors** | **400** `invalid_id`, `invalid_action`; **404** `not_found`; **401**; **403** `forbidden`. |
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/admin/events/550e8400-e29b-41d4-a716-446655440000/moderate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{"action":"approve","reason":"Looks good"}'
+```
+
+#### `PATCH /api/v1/admin/users/{id}/role`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `admin` |
+| **Request body** | `role` (string): `student`, `organizer`, or `admin`. |
+| **Success** | **200** — `id`, `email`, `role` |
+| **Errors** | **400** `invalid_role`; **404** `not_found`; **401**; **403**. |
+
+*Changing roles revokes existing refresh tokens in the backend; users must **log in again** for a new refresh token.*
+
+```bash
+curl -sS -X PATCH http://localhost:8080/api/v1/admin/users/550e8400-e29b-41d4-a716-446655440000/role \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{"role":"organizer"}'
+```
+
+#### `GET /api/v1/admin/moderation-logs`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `admin` |
+| **Query** | `event_id` (UUID, optional), `admin_id` (UUID, optional), `limit` (default 20, max 100), `offset` (default 0). |
+| **Success** | **200** — `{ "items": [...], "limit": int, "offset": int }` |
+
+```bash
+curl -sS "http://localhost:8080/api/v1/admin/moderation-logs?limit=20&offset=0" \
+  -H "Authorization: Bearer <admin_access_token>"
+```
+
+---
+
+### Analytics endpoints
+
+#### `GET /api/v1/analytics/events/stats`
+
+| | |
+|--|--|
+| **Auth** | Yes |
+| **Roles** | `organizer`, `admin` |
+| **Query** | `event_id` (UUID, optional) — omit to aggregate events in scope (organizer: own events; admin: all). |
+| **Success** | **200** — `event_id` (optional string), `total_capacity`, `registered_count`, `remaining_capacity`, `registration_timeline` (array of `{ "hour", "count" }`), `as_of` (RFC3339). |
+| **Errors** | **403** `forbidden` (organizer viewing another organizer’s event); **404** `not_found`; **401**. |
+
+```bash
+curl -sS "http://localhost:8080/api/v1/analytics/events/stats?event_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer <organizer_access_token>"
+```
+
+---
+
+## Data models
+
+JSON field names match API responses. **Nullable** fields are noted.
+
+### User (in auth responses)
+
+```json
+{
+  "id": "uuid-string",
+  "email": "string",
+  "role": "student | organizer | admin",
+  "roles": ["string"],
+  "pending_roles": ["organizer"]
+}
+```
+
+- `pending_roles`: optional; present when a role is awaiting approval (e.g. organizer request).
+
+### Event (`EventDTO`)
+
+```json
+{
+  "id": "string (UUID)",
+  "title": "string",
+  "description": "string",
+  "cover_image_url": "string",
+  "starts_at": "RFC3339 datetime",
+  "capacity_total": 0,
+  "capacity_available": 0,
+  "status": "draft | published | cancelled",
+  "moderation_status": "pending | approved | rejected"
+}
+```
+
+- `cover_image_url`: omitted or empty when not set (`omitempty`).
+
+### Ticket (register / cancel / use responses; list item shapes differ slightly)
+
+```json
+{
+  "ticket_id": "string (UUID)",
+  "event_id": "string (UUID)",
+  "user_id": "string (UUID)",
+  "status": "active | used | cancelled",
+  "qr_png_base64": "string (standard Base64 PNG, register only)",
+  "qr_hash_hex": "string (hex)"
+}
+```
+
+**`GET /tickets/my` item:** `ticket_id`, `status`, `qr_hash_hex`, `event_id`, `event_title`, `event_date` (RFC3339 string). No `qr_png_base64` in list.
+
+### Payment (when implemented; stub returns 501 today)
+
+```json
+{
+  "payment_id": "string (UUID)",
+  "provider_ref": "string",
+  "provider_url": "string",
+  "amount": 0,
+  "currency": "string",
+  "status": "pending | succeeded | failed | canceled"
+}
+```
+
+Initiate response currently only documents `payment_id`, `provider_ref`, `provider_url` in the handler DTO.
+
+### Notification (queue / outbound email)
+
+Internal queue row (for context; HTTP enqueue does not return the full row):
+
+```json
+{
+  "id": "string",
+  "type": "email | push",
+  "to": "string (recipient)",
+  "title": "string",
+  "body": "string",
+  "status": "queued | processing | sent | failed"
+}
+```
+
+---
+
+## Error handling
+
+### Standard error JSON
 
 ```json
 {
@@ -68,212 +694,151 @@
 }
 ```
 
-### HTTP-статусы и типичные `error.code`
+There is **no** `fields` array: validation failures use **`invalid_request`** with a **single human-readable `message`** (from JSON decode or go-playground validator).
 
-| HTTP | Когда | Примеры `error.code` |
-|------|--------|----------------------|
-| **400** | Невалидное тело/параметры | `invalid_request`, `invalid_id`, `email_not_allowed`, `invalid_role`, `invalid_action` |
-| **401** | Нет или неверный JWT / подпись webhook | `missing_authorization`, `invalid_token`, `invalid_credentials`, `invalid_refresh_token`, `missing_signature`, … |
-| **403** | JWT ок, роль не разрешена; запрос роли организатора не от студента; неверная подпись webhook | `forbidden`, `organizer_request_forbidden`, `invalid_signature` |
-| **404** | Сущность не найдена (в т.ч. скрытые неодобренные события для публичного GET) | `not_found`, `ticket_not_found` |
-| **409** | Конфликт бизнес-правил (билеты, вместимость, состояние события/билета) | `already_registered`, `capacity_full`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, `ticket_already_used`, `organizer_already_active`, … |
-| **429** | Rate limit | `rate_limited` |
-| **501** | Функция ещё не реализована | `not_implemented` |
-| **500** | Внутренняя ошибка | `internal_error` |
+### Common `error.code` values
 
-### Справочник `error.code` (текущая реализация)
+| HTTP | Code | When |
+|------|------|------|
+| **400** | `invalid_request` | Invalid JSON, unknown fields (where disallowed), or failed struct validation (missing fields, wrong types, tag violations). Example: `{"error":{"code":"invalid_request","message":"Key: 'RegisterRequestDTO.Password' Error:Field validation for 'Password' failed on the 'min' tag"}}` |
+| **400** | `invalid_id` | Malformed UUID in path or body. |
+| **400** | `email_not_allowed` | Registration email domain not allowed. |
+| **400** | `invalid_role` / `invalid_action` | Admin or moderation validation. |
+| **401** | `missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims` | Missing/invalid Bearer token or claims. |
+| **401** | `invalid_credentials` | Wrong password on login. |
+| **401** | `invalid_refresh_token`, `refresh_token_consumed` | Refresh misuse or reuse. |
+| **401** | `missing_signature` | Webhook without `X-Signature`. |
+| **403** | `forbidden` | Authenticated but role not allowed (RBAC). |
+| **403** | `invalid_signature` | Webhook HMAC verification failed. |
+| **403** | `organizer_request_forbidden` | Non-student requested organizer role. |
+| **404** | `not_found` | Entity missing or hidden (e.g. unapproved event for public `GET`). |
+| **409** | `email_exists`, `already_registered`, `capacity_full`, … | Business conflicts (see handlers). |
+| **429** | `rate_limited` | Too many requests; check `Retry-After`. |
+| **501** | `not_implemented` | Payment (and similar) not enabled. |
 
-**Auth:** `invalid_request`, `email_not_allowed`, `email_exists`, `invalid_credentials`, `invalid_refresh_token`, `refresh_token_consumed`, `organizer_already_active`, `organizer_request_forbidden`, `internal_error`.
+### Client handling
 
-**JWT / RBAC (middleware):** `missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims`, `missing_role`, `forbidden`.
-
-**Общие:** `unauthorized`, `invalid_id`, `not_found`, `invalid_request`, `invalid_role`, `invalid_action`, `internal_error`, `not_implemented`, `rate_limited`.
-
-**Билеты:** `capacity_full`, `already_registered`, `event_not_published`, `event_not_approved`, `event_cancelled`, `registration_closed`, `cancellation_not_allowed`, `check_in_not_open`, `ticket_not_found`, `ticket_already_cancelled`, `ticket_already_used`, `ticket_cannot_be_used`.
-
-**Платежи:** `not_implemented`, `not_found` (webhook: неизвестный `provider_ref`), `internal_error`.
-
-**Платежи (webhook):** `missing_signature`, `invalid_signature`.
-
----
-
-## Регистрация билета: ответ
-
-`POST /api/v1/tickets/register` (роль **student**), тело: `{"event_id":"<uuid>"}`.
-
-Успешный ответ **201** включает:
-
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `ticket_id` | string | UUID билета |
-| `event_id` | string | UUID события |
-| `user_id` | string | UUID пользователя |
-| `status` | string | Статус билета |
-| **`qr_hash_hex`** | string | Хеш для check-in (`POST /tickets/use`) |
-| **`qr_png_base64`** | string | Двоичный PNG, закодированный в **стандартный Base64** (без префикса `data:image/...`; при необходимости префикс добавляет клиент) |
-
-Повторная регистрация на то же событие тем же пользователем: ожидайте **409** с `code: already_registered` (см. smoke-тесты в `agents.md`).
+- Read `response.status` and parse JSON `error.code` / `error.message`.
+- On **401** with expired access token, call **`POST /auth/refresh`** then retry once.
+- On **429**, honor **`Retry-After`** (seconds) before retrying.
+- On **501** for payments, hide pay flows or show “not available” — do not assume success.
 
 ---
 
-## Таблица эндпоинтов
+## Event moderation flow
 
-Все пути относительно `http://<host>:8080/api/v1`.
+1. **Organizer or admin** creates an event (`POST /events`). New rows get **`moderation_status=pending`** (per database default) and are **not** visible on public `GET /events` or `GET /events/{id}` until approved.
+2. **Admin** calls `POST /admin/events/{id}/moderate` with `approve` or `reject`.
+3. **Public listings** only include **`moderation_status=approved`**. Pending or rejected events behave like “not found” for public GET by id.
 
-| Метод | Путь | Auth | Роль | Назначение |
-|--------|------|------|------|------------|
-| GET | `/healthz` | Нет | — | Health check |
-| GET | `/swagger/*` | Нет | — | Swagger UI |
-| POST | `/auth/register` | Нет | — | Регистрация (`email`, `password` ≥ 8, домен NU) |
-| POST | `/auth/login` | Нет | — | Вход |
-| POST | `/auth/refresh` | Нет | — | Обновление пары токенов |
-| PATCH | `/auth/me/roles` | Bearer | `student` (для запроса роли организатора) | Запрос роли organizer: тело `{"roles":["organizer"]}`; см. коды `organizer_request_forbidden`, `organizer_already_active` |
-| POST | `/events` | Bearer | `organizer`, `admin` | Создание события; опционально **`cover_image_url`**; стартовая **модерация** — `pending` |
-| GET | `/events` | Нет | — | Список **только одобренных** (`moderation_status=approved`); query: `limit` (по умолчанию **20**), `offset`, `q`, `starts_after`, `starts_before` (даты **RFC3339**) |
-| GET | `/events/{id}` | Нет | — | Карточка **только для одобренного** события; иначе 404 |
-| PUT | `/events/{id}` | Bearer | `organizer`, `admin` | Обновление полей, в т.ч. **`cover_image_url`** и `status`: `draft` / `published` / `cancelled`. Организатор — только **свои** события; иначе **403** |
-| DELETE | `/events/{id}` | Bearer | `organizer`, `admin` | Удаление; то же правило владения для organizer |
-| POST | `/tickets/register` | Bearer | `student` | Регистрация; см. поля QR выше |
-| POST | `/tickets/{id}/cancel` | Bearer | `student` | Отмена своего билета |
-| POST | `/tickets/use` | Bearer | `organizer`, `admin` | Вход по `qr_hash_hex` |
-| POST | `/payments/initiate` | Bearer | `student`, `organizer`, `admin` | Старт оплаты (`event_id`, `amount`, `currency` — 3 буквы) |
-| POST | `/payments/webhook` | Подпись `X-Signature` | — | Webhook провайдера (не для браузера) |
-| POST | `/notifications/send-email` | Нет | — | Постановка письма в очередь (`to`, `title`, `body`) |
-| GET | `/analytics/events/stats` | Bearer | **`organizer`, `admin`** | Метрики регистраций и вместимости; query `event_id` опционален. Organizer видит только свои события; чужое — **403** |
-| PATCH | `/admin/users/{id}/role` | Bearer | `admin` | Назначение роли |
-| POST | `/admin/events/{id}/moderate` | Bearer | `admin` | Модерация: тело `{"action":"approve"|"reject","reason":"..."}`; ответ `moderation_status` |
-| GET | `/admin/moderation-logs` | Bearer | `admin` | Аудит модерации; query: `event_id`, `admin_id`, `limit`, `offset` |
+Event **`status`** (`draft` / `published` / `cancelled`) is separate from moderation: ticketing also enforces published/not cancelled and approved moderation for registration.
 
-Ответы `register` / `login` / `refresh` (`AuthResponseDTO`): `access_token`, `refresh_token`, `user`: `id`, `email`, `role`.
-
-Событие в JSON содержит **`moderation_status`**: `pending` | `approved` | `rejected`. При заданной обложке в ответе присутствует **`cover_image_url`**.
+**Frontend/mobile:** show only events from `GET /events` for browse screens; organizer dashboards should use authenticated flows or admin tools to see pending/rejected items (the public API does not expose non-approved events in list/detail).
 
 ---
 
-## Swagger
+## Ticket lifecycle
 
-После запуска API: **`/api/v1/swagger/index.html`**. Перегенерация из корня репозитория:
+Current ticket **`status`** values in the API: **`active`**, **`used`**, **`cancelled`**.
 
-```bash
-$(go env GOPATH)/bin/swag init -g cmd/api/main.go -o docs
+```
+                    +------------------+
+                    | POST /tickets/   |
+                    | register         |
+                    +--------+---------+
+                             |
+                             v
+                      +-------------+
+                      |   active    |  (QR issued in response)
+                      +------+------+
+                             |
+              +--------------+---------------+
+              |                              |
+              v                              v
+    +------------------+           +------------------+
+    | POST /tickets/use|           | POST .../cancel  |
+    | (organizer/admin)|           | (student)        |
+    +--------+---------+           +--------+---------+
+             |                                |
+             v                                v
+      +-------------+                  +-------------+
+      |    used     |                  | cancelled   |
+      +-------------+                  +-------------+
 ```
 
----
+- **`active`:** valid ticket; show QR (`qr_png_base64` / `qr_hash_hex` from registration).
+- **`used`:** check-in completed; show as “used” / hide QR for re-entry per product rules.
+- **`cancelled`:** show as cancelled.
 
-## Rate limit
-
-Redis: по умолчанию **`RATE_LIMIT_REQUESTS=120`** за **`RATE_LIMIT_WINDOW_SECONDS=60`**. При превышении — **429** и `code: rate_limited` (заголовок `Retry-After`).
-
----
-
-## Состояние модулей (ожидания для клиентов)
-
-| Модуль | Статус |
-|--------|--------|
-| **auth** | Register / login / refresh, JWT |
-| **events** | CRUD; опциональная **обложка** по полю `cover_image_url` (HTTPS URL); создание только organizer/admin; публичный список и GET — только **одобренные** события; модерация через admin API |
-| **ticketing** | Регистрация, QR, отмена; check-in — organizer/admin |
-| **payments** | Заглушка; возможны **501** |
-| **notifications** | Очередь и worker; HTTP может отвечать **501** |
-| **admin** | Смена ролей и **модерация событий** |
-| **analytics** | `GET /analytics/events/stats` для **organizer** и **admin** (реальные данные из БД) |
+**Payments:** there is no `pending_payment` status on tickets in this API. **`POST /payments/initiate`** is currently **501**. Free vs paid pricing is not modeled on events; all successful registrations follow the flow above.
 
 ---
 
-## Запуск локально
+## Running without Docker
 
-### Docker (рекомендуется, в том числе для фронтенда)
+Requirements: **Go 1.22+**, **PostgreSQL**, **Redis** (same schema/migrations as Docker).
 
-Из **корня** репозитория (где лежит `docker-compose.yml`):
+1. Apply migrations (see `docker/postgres/migrations` or your project script).
+2. Export environment variables. **Minimum to start** (non-development) per `LoadFromEnv`:
 
-```bash
-docker compose up --build
-```
+- `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (non-empty)
+- `PAYMENTS_WEBHOOK_SECRET` (non-empty)
+- `POSTGRES_*` pointing at your DB
+- Redis reachable via `REDIS_*`
 
-Кратко для фронтенда:
+With `APP_ENV=development`, empty JWT secrets and empty `PAYMENTS_WEBHOOK_SECRET` are replaced by dev defaults (not for production).
 
-1. Убедитесь, что установлен Docker (на macOS удобно OrbStack / Docker Desktop).
-2. Выполните команду выше — поднимутся **api** на **`http://localhost:8080`**, **postgres** на хосте **`localhost:5432`** и **`localhost:5433`**, **redis** на **`6379`**.
-3. Базовый URL API для запросов: `http://localhost:8080/api/v1/...`. Swagger UI: `http://localhost:8080/api/v1/swagger/index.html`.
-4. Во фронте задайте базовый URL (например `VITE_API_URL=http://localhost:8080`). Origin dev-сервера должен быть **`http://localhost:3000`** или **`http://localhost:5173`** (CORS на бэкенде), либо расширьте список в `internal/infra/http/middleware.go`.
-
-При **первом** создании тома Postgres выполняются миграции из `docker/postgres/migrations/`. Если меняли SQL после того, как том уже создан, см. `agents.md` (пересоздание тома или `scripts/apply-migrations.sh`).
-
-### Только Go (нужны Postgres и Redis)
-
-Если используете Postgres с хоста на порту **5433**, задайте `POSTGRES_PORT=5433` (и хост `localhost`) в `.env`. Скопируйте `config/.env.example` в `.env`, затем:
+3. Run:
 
 ```bash
 go run ./cmd/api
 ```
 
----
-
-## Быстрые проверки (curl)
-
-Регистрация студента:
-
-```bash
-curl -sS -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
-```
-
-Вход:
-
-```bash
-curl -sS -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"student@nu.edu.kz","password":"verystrongpassword"}'
-```
-
-Создание события (нужен токен **organizer** или **admin**):
-
-```bash
-curl -sS -X POST http://localhost:8080/api/v1/events \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <organizer_or_admin_access_token>" \
-  -d '{"title":"NU Hackathon","description":"test event","starts_at":"2026-01-01T10:00:00Z","capacity_total":100,"cover_image_url":"https://example.com/covers/hackathon.jpg"}'
-```
-
-Одобрение события админом:
-
-```bash
-curl -sS -X POST "http://localhost:8080/api/v1/admin/events/<event_uuid>/moderate" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <admin_access_token>" \
-  -d '{"action":"approve"}'
-```
-
-Регистрация билета:
-
-```bash
-curl -sS -X POST http://localhost:8080/api/v1/tickets/register \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <student_access_token>" \
-  -d '{"event_id":"<uuid>"}'
-```
-
-Вход как staff-организатор и отметка по QR:
-
-```bash
-curl -sS -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"staff.organizer@nu.edu.kz","password":"DevStaffPass1!"}'
-
-curl -sS -X POST http://localhost:8080/api/v1/tickets/use \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <organizer_access_token>" \
-  -d '{"qr_hash_hex":"<hex_from_register_response>"}'
-```
+If Postgres is on **`localhost:5433`** (Docker mapped port), set e.g. `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5433`.
 
 ---
 
-## Стек (кратко)
+## CORS
 
-- Go 1.22+
-- PostgreSQL, Redis
-- Chi, JWT (access + refresh в БД)
-- Swagger (swag)
+Allowed **browser** origins (see `internal/infra/http/middleware.go`):
 
-Вопросы по контрактам — через **Swagger** и этот файл; при изменении маршрутов обновляйте аннотации и команду `swag init` выше.
+- `http://localhost:3000`
+- `http://localhost:5173`
+
+Methods: `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`. Headers: `Content-Type`, `Authorization`. Credentials allowed when origin matches.
+
+**Mobile (Flutter)** and other native clients typically do not send a browser `Origin`; CORS does not apply. Use your machine’s **LAN IP** and port (e.g. `http://192.168.1.10:8080`) instead of `localhost` when testing on a physical device.
+
+---
+
+## Development notes for frontend (React)
+
+- **Base URL:** `http://localhost:{PORT}/api/v1` (default **8080**).
+- **Tokens:** keep **`access_token` in memory** (not `localStorage` if you want to reduce XSS risk); store **`refresh_token`** in an **HttpOnly cookie** (if you add a BFF) or secure storage appropriate to your threat model.
+- **401 handling:** on **401**, call **`POST /auth/refresh`**, update tokens, **retry the request once**; if refresh fails, redirect to login.
+- **Pagination:** `GET /events` uses **`limit`** (default 20, max 100) and **`offset`**; response echoes `limit` and `offset` for UI state.
+- **Images:** `cover_image_url` is a **plain HTTPS URL string** — upload files to your own storage/CDN, then pass the URL in `POST`/`PUT` events.
+
+---
+
+## Development notes for mobile (Flutter)
+
+- Use **`dio`** or **`http`** with an **interceptor** that adds `Authorization: Bearer <access_token>` to API calls.
+- On **401**, run **refresh** in the interceptor and **retry** once.
+- **QR display:** `qr_png_base64` is raw Base64 PNG → `Image.memory(base64Decode(ticket.qr_png_base64))` (add `data:` prefix only if you choose to store it that way; API returns raw Base64).
+- **Organizer scan:** read payload from QR or use stored **`qr_hash_hex`** → `POST /tickets/use` with `{ "qr_hash_hex": "..." }`.
+- **Push notifications:** this backend sends **email** via the notifications queue only; for **FCM/APNs**, implement on the client and optionally add your own gateway later.
+
+---
+
+## Swagger UI
+
+- **URL:** `http://localhost:{PORT}/api/v1/swagger/index.html` (default: port **8080**).
+
+Click **Authorize**, enter:
+
+```text
+Bearer <paste_access_token_here>
+```
+
+(include the word `Bearer` and a space before the token). Then call secured endpoints from Swagger.
