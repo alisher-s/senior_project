@@ -97,7 +97,9 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 	if e.OrganizerID != nil {
 		orgID = *e.OrganizerID
 	}
-	var location any
+	// DB schema expects location to be NOT NULL (empty string when omitted).
+	// Some existing local volumes may have NOT NULL without a DEFAULT, so avoid inserting NULL.
+	location := ""
 	if e.Location != nil {
 		location = *e.Location
 	}
