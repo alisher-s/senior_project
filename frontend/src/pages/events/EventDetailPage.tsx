@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { eventsAPI, ticketsAPI } from '../../api/services';
 import { useAuthStore } from '../../stores/auth';
 import { useTicketsStore } from '../../stores/tickets';
@@ -13,8 +13,9 @@ import { CalendarDays, Users, ArrowLeft, Ticket, CheckCircle } from 'lucide-reac
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, isAuthenticated } = useAuthStore();
-  const ticketsStore = useTicketsStore();
+  const { cacheQR } = useTicketsStore();
   const toast = useToastStore();
   const [registering, setRegistering] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -25,7 +26,17 @@ export default function EventDetailPage() {
     enabled: !!id,
   });
 
-  const existingTicket = id ? ticketsStore.getByEvent(id) : undefined;
+  // Check if user already has a ticket for this event via server
+  const { data: myTickets } = useQuery({
+    queryKey: ['my-tickets'],
+    queryFn: () => ticketsAPI.my().then((r) => r.data),
+    enabled: isAuthenticated,
+  });
+
+  const existingTicket = myTickets?.tickets.find(
+    (t) => t.event_id === id && (t.status === 'active' || t.status === 'used')
+  );
+
   const isFull = event ? event.capacity_available <= 0 : false;
   const past = event ? isEventPast(event.starts_at) : false;
 
@@ -36,17 +47,11 @@ export default function EventDetailPage() {
 
     try {
       const { data } = await ticketsAPI.register(id);
-      ticketsStore.addTicket({
-        ticket_id: data.ticket_id,
-        event_id: data.event_id,
-        event_title: event.title,
-        event_starts_at: event.starts_at,
-        status: data.status,
-        qr_png_base64: data.qr_png_base64,
-        qr_hash_hex: data.qr_hash_hex,
-        registered_at: new Date().toISOString(),
-      });
+      // Cache QR locally since GET /tickets/my doesn't return it
+      cacheQR(data.ticket_id, data.qr_png_base64);
       toast.add('Registered! Your ticket is ready.', 'success');
+      queryClient.invalidateQueries({ queryKey: ['my-tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['event', id] });
       navigate(`/my/tickets`);
     } catch (err) {
       const code = getErrorCode(err);
@@ -96,7 +101,18 @@ export default function EventDetailPage() {
       </button>
 
       <div className="rounded-2xl border border-white/5 bg-nu-surface/50 overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-nu-gold to-nu-gold-light" />
+        {/* Cover image or accent bar */}
+        {event.cover_image_url ? (
+          <div className="h-48 sm:h-64 overflow-hidden">
+            <img
+              src={event.cover_image_url}
+              alt={event.title}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ) : (
+          <div className="h-2 bg-gradient-to-r from-nu-gold to-nu-gold-light" />
+        )}
 
         <div className="p-6 sm:p-8">
           <div className="flex flex-wrap gap-2 mb-4">

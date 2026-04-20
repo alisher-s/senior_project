@@ -10,12 +10,14 @@ import type {
   RegisterTicketResponse,
   CancelTicketResponse,
   UseTicketResponse,
+  MyTicketsResponse,
   InitiatePaymentRequest,
   InitiatePaymentResponse,
   ModerateEventRequest,
   ModerateEventResponse,
   UserRoleResponse,
   SetUserRoleRequest,
+  ModerationLogsResponse,
   EventStatsResponse,
 } from '../types';
 
@@ -29,6 +31,9 @@ export const authAPI = {
 
   refresh: (refresh_token: string) =>
     api.post<AuthResponse>('/auth/refresh', { refresh_token }),
+
+  requestOrganizer: () =>
+    api.patch<{ user: import('../types').UserDTO }>('/auth/me/roles', { roles: ['organizer'] }),
 };
 
 // ─── Events ───────────────────────────────────────
@@ -59,6 +64,9 @@ export const eventsAPI = {
 
 // ─── Tickets ──────────────────────────────────────
 export const ticketsAPI = {
+  my: () =>
+    api.get<MyTicketsResponse>('/tickets/my'),
+
   register: (event_id: string) =>
     api.post<RegisterTicketResponse>('/tickets/register', { event_id }),
 
@@ -82,6 +90,9 @@ export const adminAPI = {
 
   setUserRole: (userId: string, data: SetUserRoleRequest) =>
     api.patch<UserRoleResponse>(`/admin/users/${userId}/role`, data),
+
+  moderationLogs: (params?: { event_id?: string; admin_id?: string; limit?: number; offset?: number }) =>
+    api.get<ModerationLogsResponse>('/admin/moderation-logs', { params }),
 };
 
 // ─── Analytics ────────────────────────────────────

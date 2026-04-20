@@ -18,8 +18,18 @@ export function EventCard({ event }: EventCardProps) {
       to={`/events/${event.id}`}
       className="group block rounded-2xl border border-white/5 bg-nu-surface/50 hover:bg-nu-surface hover:border-nu-gold/20 transition-all duration-300 overflow-hidden"
     >
-      {/* Color accent bar */}
-      <div className="h-1 bg-gradient-to-r from-nu-gold to-nu-gold-light" />
+      {/* Color accent bar or cover image */}
+      {event.cover_image_url ? (
+        <div className="h-36 overflow-hidden">
+          <img
+            src={event.cover_image_url}
+            alt={event.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        </div>
+      ) : (
+        <div className="h-1 bg-gradient-to-r from-nu-gold to-nu-gold-light" />
+      )}
 
       <div className="p-5">
         <div className="flex items-start justify-between gap-3 mb-3">

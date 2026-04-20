@@ -1,51 +1,36 @@
 import { create } from 'zustand';
-import type { StoredTicket } from '../types';
+
+// QR images are cached client-side since GET /tickets/my doesn't return them.
+// The server is now the source of truth for ticket list/status.
+
+interface QRCache {
+  [ticketId: string]: string; // ticket_id -> qr_png_base64
+}
 
 interface TicketsState {
-  tickets: StoredTicket[];
-  addTicket: (ticket: StoredTicket) => void;
-  removeTicket: (ticketId: string) => void;
-  updateStatus: (ticketId: string, status: string) => void;
-  getByEvent: (eventId: string) => StoredTicket | undefined;
+  qrCache: QRCache;
+  cacheQR: (ticketId: string, qrBase64: string) => void;
+  getQR: (ticketId: string) => string | undefined;
   hydrate: () => void;
 }
 
-const STORAGE_KEY = 'nu_tickets';
+const STORAGE_KEY = 'nu_qr_cache';
 
 export const useTicketsStore = create<TicketsState>((set, get) => ({
-  tickets: [],
+  qrCache: {},
 
-  addTicket: (ticket) => {
-    const current = get().tickets.filter((t) => t.ticket_id !== ticket.ticket_id);
-    const next = [ticket, ...current];
+  cacheQR: (ticketId, qrBase64) => {
+    const next = { ...get().qrCache, [ticketId]: qrBase64 };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    set({ tickets: next });
+    set({ qrCache: next });
   },
 
-  removeTicket: (ticketId) => {
-    const next = get().tickets.filter((t) => t.ticket_id !== ticketId);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    set({ tickets: next });
-  },
-
-  updateStatus: (ticketId, status) => {
-    const next = get().tickets.map((t) =>
-      t.ticket_id === ticketId ? { ...t, status } : t
-    );
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    set({ tickets: next });
-  },
-
-  getByEvent: (eventId) => {
-    return get().tickets.find(
-      (t) => t.event_id === eventId && t.status === 'active'
-    );
-  },
+  getQR: (ticketId) => get().qrCache[ticketId],
 
   hydrate: () => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) set({ tickets: JSON.parse(stored) });
+      if (stored) set({ qrCache: JSON.parse(stored) });
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }

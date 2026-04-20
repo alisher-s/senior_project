@@ -1,16 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { eventsAPI } from '../../api/services';
+import { eventsAPI, analyticsAPI } from '../../api/services';
 import { Badge, Button, Spinner, EmptyState } from '../../components/ui/Primitives';
 import { formatEventDate } from '../../lib/utils';
-import { Plus, CalendarDays, Users, Edit, Eye } from 'lucide-react';
+import { Plus, CalendarDays, Users, Edit, Eye, BarChart3 } from 'lucide-react';
 import type { EventDTO } from '../../types';
 
 export default function OrganizerDashboard() {
-  // Fetch all events (organizer sees their own via the general list for now)
   const { data, isLoading } = useQuery({
     queryKey: ['events', 'all'],
     queryFn: () => eventsAPI.list({ limit: 100 }).then((r) => r.data),
+  });
+
+  const { data: stats } = useQuery({
+    queryKey: ['analytics', 'overview'],
+    queryFn: () => analyticsAPI.eventStats().then((r) => r.data),
   });
 
   const events = data?.items || [];
@@ -29,16 +33,38 @@ export default function OrganizerDashboard() {
         </Link>
       </div>
 
-      {/* Stats overview */}
+      {/* Stats overview from analytics API */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard label="Total Events" value={events.length} />
-        <StatCard label="Published" value={events.filter((e) => e.status === 'published').length} />
-        <StatCard label="Pending Review" value={events.filter((e) => e.moderation_status === 'pending').length} />
-        <StatCard
-          label="Total Capacity"
-          value={events.reduce((sum, e) => sum + e.capacity_total, 0)}
-        />
+        <StatCard label="Registered" value={stats?.registered_count ?? 0} />
+        <StatCard label="Remaining" value={stats?.remaining_capacity ?? 0} />
+        <StatCard label="Total Capacity" value={stats?.total_capacity ?? 0} />
       </div>
+
+      {/* Registration timeline chart (simple bar) */}
+      {stats?.registration_timeline && stats.registration_timeline.length > 0 && (
+        <div className="rounded-xl border border-white/5 bg-nu-surface/50 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 className="w-4 h-4 text-nu-gold" />
+            <h2 className="font-display font-semibold text-sm">Registration Timeline</h2>
+          </div>
+          <div className="flex items-end gap-1 h-32">
+            {(() => {
+              const maxCount = Math.max(...stats.registration_timeline.map((h) => h.count), 1);
+              return stats.registration_timeline.slice(-24).map((h, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                  <div
+                    className="w-full bg-nu-gold/60 rounded-t-sm min-h-[2px] transition-all"
+                    style={{ height: `${(h.count / maxCount) * 100}%` }}
+                    title={`${h.count} registrations at ${new Date(h.hour).toLocaleTimeString()}`}
+                  />
+                </div>
+              ));
+            })()}
+          </div>
+          <p className="text-xs text-nu-text-muted mt-2">Last 24 hours of registration activity</p>
+        </div>
+      )}
 
       {/* Events list */}
       {isLoading ? (
@@ -85,6 +111,13 @@ function OrganizerEventRow({ event }: { event: EventDTO }) {
 
   return (
     <div className="flex items-center gap-4 rounded-xl border border-white/5 bg-nu-surface/50 p-4">
+      {/* Cover image thumbnail */}
+      {event.cover_image_url && (
+        <div className="shrink-0 w-16 h-12 rounded-lg overflow-hidden">
+          <img src={event.cover_image_url} alt="" className="w-full h-full object-cover" />
+        </div>
+      )}
+
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <h3 className="font-semibold text-sm truncate">{event.title}</h3>

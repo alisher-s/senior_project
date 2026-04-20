@@ -1,7 +1,7 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth';
 import {
-  CalendarDays, Ticket, LayoutDashboard, Shield, LogOut, Menu, X, Plus,
+  CalendarDays, Ticket, LayoutDashboard, Shield, LogOut, Menu, X, Plus, ScanLine,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../../lib/utils';
@@ -22,6 +22,7 @@ export default function AppShell() {
     { to: '/my/tickets', label: 'My Tickets', icon: Ticket, roles: ['student', 'organizer', 'admin'] },
     { to: '/organizer', label: 'Dashboard', icon: LayoutDashboard, roles: ['organizer', 'admin'] },
     { to: '/organizer/events/new', label: 'Create Event', icon: Plus, roles: ['organizer', 'admin'] },
+    { to: '/organizer/check-in', label: 'Check-In', icon: ScanLine, roles: ['organizer', 'admin'] },
     { to: '/admin', label: 'Admin', icon: Shield, roles: ['admin'] },
   ].filter(
     (item) => item.roles === null || (user && item.roles.includes(user.role))

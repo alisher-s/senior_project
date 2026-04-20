@@ -15,6 +15,7 @@ export default function EditEventPage() {
   const [form, setForm] = useState({
     title: '',
     description: '',
+    cover_image_url: '',
     starts_at: '',
     capacity_total: '',
     status: '' as string,
@@ -34,6 +35,7 @@ export default function EditEventPage() {
       setForm({
         title: event.title,
         description: event.description,
+        cover_image_url: event.cover_image_url || '',
         starts_at: local,
         capacity_total: String(event.capacity_total),
         status: event.status,
@@ -55,6 +57,7 @@ export default function EditEventPage() {
       await eventsAPI.update(id, {
         title: form.title,
         description: form.description,
+        cover_image_url: form.cover_image_url || undefined,
         starts_at: new Date(form.starts_at).toISOString(),
         capacity_total: parseInt(form.capacity_total),
         status: form.status as 'draft' | 'published' | 'cancelled',
@@ -109,6 +112,13 @@ export default function EditEventPage() {
             onChange={(e) => update('description', e.target.value)}
             rows={5}
             error={errors.description}
+          />
+
+          <Input
+            label="Cover Image URL (optional)"
+            value={form.cover_image_url}
+            onChange={(e) => update('cover_image_url', e.target.value)}
+            placeholder="https://example.com/image.jpg"
           />
 
           <Input

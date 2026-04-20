@@ -3,6 +3,8 @@ export interface UserDTO {
   id: string;
   email: string;
   role: 'student' | 'organizer' | 'admin';
+  roles: string[];
+  pending_roles?: string[];
 }
 
 export interface AuthResponse {
@@ -26,6 +28,7 @@ export interface EventDTO {
   id: string;
   title: string;
   description: string;
+  cover_image_url?: string;
   starts_at: string;
   capacity_total: number;
   capacity_available: number;
@@ -42,6 +45,7 @@ export interface ListEventsResponse {
 export interface CreateEventRequest {
   title: string;
   description: string;
+  cover_image_url?: string;
   starts_at: string;
   capacity_total: number;
 }
@@ -49,6 +53,7 @@ export interface CreateEventRequest {
 export interface UpdateEventRequest {
   title?: string;
   description?: string;
+  cover_image_url?: string;
   starts_at?: string;
   capacity_total?: number;
   status?: 'draft' | 'published' | 'cancelled';
@@ -86,6 +91,20 @@ export interface UseTicketResponse {
   status: string;
 }
 
+// GET /tickets/my response
+export interface MyTicketsResponse {
+  tickets: MyTicketItem[];
+}
+
+export interface MyTicketItem {
+  ticket_id: string;
+  status: 'active' | 'used' | 'cancelled' | 'expired';
+  qr_hash_hex: string;
+  event_id: string;
+  event_title: string;
+  event_date: string;
+}
+
 // Payments
 export interface InitiatePaymentRequest {
   event_id: string;
@@ -119,11 +138,33 @@ export interface UserRoleResponse {
   role: string;
 }
 
-// Analytics
+export interface ModerationLogEntry {
+  id: string;
+  admin_user_id: string;
+  event_id?: string;
+  action: string;
+  reason?: string;
+  created_at: string;
+}
+
+export interface ModerationLogsResponse {
+  items: ModerationLogEntry[];
+  limit: number;
+  offset: number;
+}
+
+// Analytics (now fully implemented)
+export interface RegistrationHour {
+  hour: string;
+  count: number;
+}
+
 export interface EventStatsResponse {
-  event_id: string;
-  tickets: number;
-  revenue: number;
+  event_id?: string;
+  total_capacity: number;
+  registered_count: number;
+  remaining_capacity: number;
+  registration_timeline: RegistrationHour[];
   as_of: string;
 }
 
@@ -133,16 +174,4 @@ export interface APIError {
     code: string;
     message: string;
   };
-}
-
-// Local ticket type (stored client-side after registration)
-export interface StoredTicket {
-  ticket_id: string;
-  event_id: string;
-  event_title: string;
-  event_starts_at: string;
-  status: string;
-  qr_png_base64: string;
-  qr_hash_hex: string;
-  registered_at: string;
 }

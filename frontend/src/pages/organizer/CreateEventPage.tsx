@@ -13,6 +13,7 @@ export default function CreateEventPage() {
   const [form, setForm] = useState({
     title: '',
     description: '',
+    cover_image_url: '',
     starts_at: '',
     capacity_total: '',
   });
@@ -49,6 +50,7 @@ export default function CreateEventPage() {
       const payload = {
         title: form.title,
         description: form.description,
+        cover_image_url: form.cover_image_url || undefined,
         starts_at: new Date(form.starts_at).toISOString(),
         capacity_total: parseInt(form.capacity_total),
       };
@@ -93,6 +95,14 @@ export default function CreateEventPage() {
             placeholder="Describe your event..."
             rows={5}
             error={errors.description}
+          />
+
+          <Input
+            label="Cover Image URL (optional)"
+            value={form.cover_image_url}
+            onChange={(e) => update('cover_image_url', e.target.value)}
+            placeholder="https://example.com/image.jpg"
+            error={errors.cover_image_url}
           />
 
           <Input
