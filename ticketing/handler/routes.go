@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -65,9 +64,7 @@ type handler struct {
 func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
@@ -78,9 +75,7 @@ func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
 			"request_id", httpx.GetRequestID(r),
 			"user_id", userID.String(),
 		)
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "internal server error")
 		return
 	}
 
@@ -116,31 +111,26 @@ func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req RegisterTicketRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	eventID, err := uuid.Parse(strings.TrimSpace(req.EventID))
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event_id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid event_id")
 		return
 	}
 
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	ticket, qrPNGBase64, err := h.svc.RegisterTicket(r.Context(), userID, eventID)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -173,23 +163,20 @@ func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	ticketID, err := uuid.Parse(idStr)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid ticket id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid ticket id")
 		return
 	}
 
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	ticket, err := h.svc.CancelTicket(r.Context(), userID, ticketID)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -219,15 +206,14 @@ func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleUse(w http.ResponseWriter, r *http.Request) {
 	var req UseTicketRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	ticket, err := h.svc.UseTicketByQRHash(r.Context(), req.QRHashHex)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -237,69 +223,4 @@ func (h *handler) handleUse(w http.ResponseWriter, r *http.Request) {
 		UserID:   ticket.UserID.String(),
 		Status:   string(ticket.Status),
 	})
-}
-
-func writeServiceError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, repository.ErrEventNotFound), errors.Is(err, service.ErrEventNotFound):
-		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-		})
-	case errors.Is(err, repository.ErrCapacityFull), errors.Is(err, service.ErrCapacityFull):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "capacity_full", Message: "event capacity is full"},
-		})
-	case errors.Is(err, repository.ErrAlreadyRegistered), errors.Is(err, service.ErrAlreadyRegistered):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "already_registered", Message: "ticket already exists"},
-		})
-	case errors.Is(err, repository.ErrEventNotPublished), errors.Is(err, service.ErrEventNotPublished):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "event_not_published", Message: "event is not open for registration"},
-		})
-	case errors.Is(err, repository.ErrEventNotApproved), errors.Is(err, service.ErrEventNotApproved):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "event_not_approved", Message: "event is not approved for registration"},
-		})
-	case errors.Is(err, repository.ErrEventCancelled), errors.Is(err, service.ErrEventCancelled):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "event_cancelled", Message: "event is cancelled"},
-		})
-	case errors.Is(err, repository.ErrEventRegistrationClosed), errors.Is(err, service.ErrEventRegistrationClosed):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "registration_closed", Message: "registration is closed for this event"},
-		})
-	case errors.Is(err, repository.ErrCancellationNotAllowed), errors.Is(err, service.ErrCancellationNotAllowed):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "cancellation_not_allowed", Message: "ticket cannot be cancelled after the event has started"},
-		})
-	case errors.Is(err, repository.ErrTicketExpired):
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "ticket_expired", Message: "ticket has expired"},
-		})
-	case errors.Is(err, repository.ErrCheckInNotOpenYet), errors.Is(err, service.ErrCheckInNotOpenYet):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "check_in_not_open", Message: "check-in is not open yet for this event"},
-		})
-	case errors.Is(err, repository.ErrTicketNotFound), errors.Is(err, service.ErrTicketNotFound):
-		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "ticket_not_found", Message: "ticket not found"},
-		})
-	case errors.Is(err, repository.ErrTicketAlreadyCancelled), errors.Is(err, service.ErrTicketAlreadyCancelled):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "ticket_already_cancelled", Message: "ticket already cancelled"},
-		})
-	case errors.Is(err, repository.ErrTicketAlreadyUsed), errors.Is(err, service.ErrTicketAlreadyUsed):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "ticket_already_used", Message: "ticket already used"},
-		})
-	case errors.Is(err, repository.ErrTicketCannotBeUsed), errors.Is(err, service.ErrTicketCannotBeUsed):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "ticket_cannot_be_used", Message: "ticket cannot be used"},
-		})
-	default:
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
-		})
-	}
 }

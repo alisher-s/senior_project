@@ -49,6 +49,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 	r.Use(middleware.RealIP)
 	r.Use(httpx.SecurityHeaders())
 	r.Use(httpx.Logging(logger))
+	r.Use(httpx.ErrorHandler(logger))
 	r.Use(httpx.Recovery(logger))
 	r.Use(httpx.RequestTimeout(25 * time.Second))
 

@@ -59,12 +59,7 @@ return current
 					retryAfter = 0
 				}
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-				_ = httpx.WriteJSON(w, http.StatusTooManyRequests, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{
-						Code:    "rate_limited",
-						Message: "too many requests",
-					},
-				})
+				httpx.WriteError(w, http.StatusTooManyRequests, httpx.ErrCodeRateLimited, "too many requests")
 				return
 			}
 

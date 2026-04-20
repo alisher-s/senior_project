@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -63,15 +62,11 @@ func (h *handler) handleSendEmail(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid json"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid json")
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -83,15 +78,17 @@ func (h *handler) handleSendEmail(w http.ResponseWriter, r *http.Request) {
 		Body:  req.Body,
 	})
 	if err != nil {
-		if errors.Is(err, notificationsService.ErrNotImplemented) {
-			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_implemented", Message: "send-email not implemented yet"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status < 500 {
+			// More specific client-facing message for this stub.
+			if status == http.StatusNotImplemented {
+				httpx.WriteError(w, status, apiErr.Code, "send-email not implemented yet")
+				return
+			}
+			httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 			return
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to enqueue email"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to enqueue email")
 		return
 	}
 

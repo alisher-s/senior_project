@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -65,15 +64,14 @@ type handler struct {
 func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	user, access, refresh, err := h.svc.Register(r.Context(), req.Email, req.Password)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -97,15 +95,14 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	user, access, refresh, err := h.svc.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -129,15 +126,14 @@ func (h *handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	user, access, refresh, err := h.svc.Refresh(r.Context(), req.RefreshToken)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -165,75 +161,28 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handlePatchMeRoles(w http.ResponseWriter, r *http.Request) {
 	var req PatchMeRolesRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	if err := h.svc.RequestOrganizerRole(r.Context(), userID, req.Roles); err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
 	u, err := h.svc.UserByID(r.Context(), userID)
 	if err != nil {
-		writeServiceError(w, err)
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, MeRolesResponseDTO{User: userToDTO(u)})
-}
-
-func writeServiceError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, service.ErrEmailNotAllowed):
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "email_not_allowed", Message: "email domain is not allowed"},
-		})
-	case errors.Is(err, service.ErrEmailAlreadyExists):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "email_exists", Message: "email already exists"},
-		})
-	case errors.Is(err, service.ErrInvalidCredentials):
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_credentials", Message: "invalid email or password"},
-		})
-	case errors.Is(err, service.ErrRefreshTokenInvalid):
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_refresh_token", Message: "invalid refresh token"},
-		})
-	case errors.Is(err, service.ErrRefreshTokenConsumed):
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "refresh_token_consumed", Message: "refresh token already used"},
-		})
-	case errors.Is(err, service.ErrOrganizerAlreadyActive):
-		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "organizer_already_active", Message: "organizer role is already active"},
-		})
-	case errors.Is(err, service.ErrOrganizerRequestNotAllowed):
-		_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "organizer_request_forbidden", Message: "only active students may request organizer role"},
-		})
-	case errors.Is(err, service.ErrOrganizerRequestInvalidBody):
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: "request exactly {\"roles\":[\"organizer\"]}"},
-		})
-	case errors.Is(err, authrepo.ErrUserNotFound):
-		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "not_found", Message: "user not found"},
-		})
-	default:
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "internal server error"},
-		})
-	}
 }

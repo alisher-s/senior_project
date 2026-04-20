@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -60,25 +59,19 @@ type handler struct {
 func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var req CreateEventRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	organizerID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, organizerID)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to create event"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to create event")
 		return
 	}
 
@@ -106,9 +99,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("limit"); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 1 || v > 100 {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid limit"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid limit")
 			return
 		}
 		limit = v
@@ -116,9 +107,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("offset"); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 0 || v > 100000 {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid offset"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid offset")
 			return
 		}
 		offset = v
@@ -129,9 +118,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
 			startsAfter = &t
 		} else {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid starts_after"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid starts_after")
 			return
 		}
 	}
@@ -140,9 +127,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
 			startsBefore = &t
 		} else {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid starts_before"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid starts_before")
 			return
 		}
 	}
@@ -158,9 +143,7 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 
 	items, err := h.svc.List(r.Context(), filter)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to list events"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to list events")
 		return
 	}
 
@@ -191,30 +174,19 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid event id")
 		return
 	}
 
 	ev, err := h.svc.GetByID(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
-			return
-		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to load event"},
-		})
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
 	if ev.ModerationStatus != model.ModerationApproved {
-		_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-		})
+		httpx.WriteError(w, http.StatusNotFound, httpx.ErrCodeNotFound, "event not found")
 		return
 	}
 
@@ -239,54 +211,37 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid event id")
 		return
 	}
 
 	if _, ok := authx.RoleFromContext(r.Context()); !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing role")
 		return
 	}
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	existing, err := h.svc.GetByID(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
-			return
-		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to load event"},
-		})
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
 	if authx.HasRole(r.Context(), authx.RoleOrganizer) && !authx.HasRole(r.Context(), authx.RoleAdmin) {
 		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
-			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to modify this event"},
-			})
+			httpx.WriteError(w, http.StatusForbidden, httpx.ErrCodeForbidden, "not allowed to modify this event")
 			return
 		}
 	}
 
 	var req UpdateEventRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -298,15 +253,12 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, statusPatch)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status >= 500 {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to update event")
 			return
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to update event"},
-		})
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -330,60 +282,42 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid event id")
 		return
 	}
 
 	_, ok := authx.RoleFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing role")
 		return
 	}
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	existing, err := h.svc.GetByID(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
-			return
-		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to load event"},
-		})
+		status, apiErr := httpx.MapDomainError(err)
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
 	if authx.HasRole(r.Context(), authx.RoleOrganizer) && !authx.HasRole(r.Context(), authx.RoleAdmin) {
 		if existing.OrganizerID == nil || *existing.OrganizerID != userID {
-			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to delete this event"},
-			})
+			httpx.WriteError(w, http.StatusForbidden, httpx.ErrCodeForbidden, "not allowed to delete this event")
 			return
 		}
 	}
 
 	if err := h.svc.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status >= 500 {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to delete event")
 			return
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to delete event"},
-		})
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 

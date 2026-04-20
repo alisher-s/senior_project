@@ -76,39 +76,29 @@ type handler struct {
 func (h *handler) handleInitiate(w http.ResponseWriter, r *http.Request) {
 	var req InitiatePaymentRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	eventID, err := uuid.Parse(strings.TrimSpace(req.EventID))
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event_id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid event_id")
 		return
 	}
 
 	userID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	payment, providerURL, err := h.svc.Initiate(r.Context(), userID, eventID, req.Amount, req.Currency)
 	if err != nil {
 		if errors.Is(err, repository.ErrPaymentsDisabled) {
-			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_implemented", Message: "payments are not enabled yet"},
-			})
+			httpx.WriteError(w, http.StatusNotImplemented, httpx.ErrCodeNotImplemented, "payments are not enabled yet")
 			return
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "payment initiation failed"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "payment initiation failed")
 		return
 	}
 
@@ -137,23 +127,17 @@ func (h *handler) handleInitiate(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: "failed to read request body"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "failed to read request body")
 		return
 	}
 
 	providedSig := r.Header.Get("X-Signature")
 	if providedSig == "" {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "missing_signature", Message: "missing X-Signature header"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeMissingSignature, "missing X-Signature header")
 		return
 	}
 	if !h.verifyWebhookSignature(body, providedSig) {
-		_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_signature", Message: "webhook signature verification failed"},
-		})
+		httpx.WriteError(w, http.StatusForbidden, httpx.ErrCodeInvalidSignature, "webhook signature verification failed")
 		return
 	}
 
@@ -162,15 +146,11 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -178,20 +158,14 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	_, err = h.svc.Webhook(r.Context(), req.ProviderRef, model.PaymentStatus(req.Status))
 	if err != nil {
 		if errors.Is(err, repository.ErrPaymentsDisabled) {
-			_ = httpx.WriteJSON(w, http.StatusNotImplemented, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_implemented", Message: "payments are not enabled yet"},
-			})
+			httpx.WriteError(w, http.StatusNotImplemented, httpx.ErrCodeNotImplemented, "payments are not enabled yet")
 			return
 		}
 		if errors.Is(err, service.ErrPaymentNotFound) || errors.Is(err, repository.ErrPaymentNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "payment not found"},
-			})
+			httpx.WriteError(w, http.StatusNotFound, httpx.ErrCodeNotFound, "payment not found")
 			return
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "payment webhook failed"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "payment webhook failed")
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, struct{}{})

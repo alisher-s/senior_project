@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -62,15 +61,11 @@ type handler struct {
 func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 	callerID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 	if _, ok := authx.RoleFromContext(r.Context()); !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing role"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing role")
 		return
 	}
 	isAdmin := authx.HasRole(r.Context(), authx.RoleAdmin)
@@ -80,9 +75,7 @@ func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 	if eventIDParam != "" {
 		id, err := uuid.Parse(eventIDParam)
 		if err != nil {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid event_id"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid event_id")
 			return
 		}
 		eventID = &id
@@ -90,24 +83,20 @@ func (h *handler) handleEventStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.svc.EventStats(r.Context(), callerID, isAdmin, eventID)
 	if err != nil {
-		if errors.Is(err, service.ErrEventNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
-			return
-		}
-		if errors.Is(err, service.ErrForbidden) {
-			_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "forbidden", Message: "not allowed to view stats for this event"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status < 500 {
+			// Keep a clearer message for the client on this endpoint.
+			if apiErr.Code == httpx.ErrCodeForbidden {
+				httpx.WriteError(w, http.StatusForbidden, apiErr.Code, "not allowed to view stats for this event")
+				return
+			}
+			httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 			return
 		}
 		if h.log != nil {
 			h.log.Error("analytics: event stats failed", "err", err)
 		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "analytics failed"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "analytics failed")
 		return
 	}
 

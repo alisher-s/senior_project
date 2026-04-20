@@ -13,41 +13,31 @@ func AuthMiddleware(jwt JWT) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authz := r.Header.Get("Authorization")
 			if authz == "" {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "missing_authorization", Message: "missing Authorization header"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeMissingAuthorization, "missing Authorization header")
 				return
 			}
 			parts := strings.SplitN(authz, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "invalid_authorization", Message: "Authorization must be Bearer token"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeInvalidAuthorization, "Authorization must be Bearer token")
 				return
 			}
 
 			claims, err := jwt.ParseAccessToken(parts[1])
 			if err != nil {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "invalid_token", Message: "invalid or expired access token"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeInvalidToken, "invalid or expired access token")
 				return
 			}
 
 			effRoles, err := EffectiveAccessRoles(claims)
 			if err != nil {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "invalid_token_claims", Message: "invalid token claims"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeInvalidTokenClaims, "invalid token claims")
 				return
 			}
 
 			userIDStr := claims.UserID
 			userID, err := uuid.Parse(userIDStr)
 			if err != nil {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "invalid_token_claims", Message: "invalid token claims"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeInvalidTokenClaims, "invalid token claims")
 				return
 			}
 
@@ -68,9 +58,7 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			roles, ok := RolesFromContext(r.Context())
 			if !ok || len(roles) == 0 {
-				_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "missing_role", Message: "missing user role"},
-				})
+				httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeMissingRole, "missing user role")
 				return
 			}
 
@@ -82,9 +70,7 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 				}
 			}
 			if !granted {
-				_ = httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorResponse{
-					Error: httpx.ErrorBody{Code: "forbidden", Message: "insufficient permissions"},
-				})
+				httpx.WriteError(w, http.StatusForbidden, httpx.ErrCodeForbidden, "insufficient permissions")
 				return
 			}
 

@@ -91,6 +91,44 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// ErrorHandler logs responses at WARN for 4xx and ERROR for 5xx (never ERROR for 4xx).
+// It does not attempt to rewrite responses; handlers remain responsible for writing bodies.
+func ErrorHandler(logger *slog.Logger) func(http.Handler) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+
+			status := ww.Status()
+			if status < 400 {
+				return
+			}
+			reqID := middleware.GetReqID(r.Context())
+			if reqID == "" {
+				reqID = uuid.NewString()
+			}
+
+			fields := []any{
+				"request_id", reqID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", status,
+				"latency_ms", float64(time.Since(start).Microseconds()) / 1000.0,
+				"remote_ip", r.RemoteAddr,
+			}
+			if status >= 500 {
+				logger.Error("http_response_error", fields...)
+				return
+			}
+			logger.Warn("http_response_client_error", fields...)
+		})
+	}
+}
+
 func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +142,7 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 						"request_id", reqID,
 						"panic", rec,
 					)
-					httpxWriteInternalServerError(w)
+					WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, "internal server error")
 				}
 			}()
 			ctx := context.WithValue(r.Context(), requestIDKey, middleware.GetReqID(r.Context()))
@@ -139,8 +177,6 @@ func RequestTimeout(d time.Duration) func(http.Handler) http.Handler {
 }
 
 func httpxWriteInternalServerError(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusInternalServerError)
-	_, _ = w.Write([]byte(`{"error":{"code":"internal_error","message":"internal server error"}}`))
+	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, "internal server error")
 }
 

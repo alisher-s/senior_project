@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -111,45 +110,30 @@ func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
 	userID, err := uuid.Parse(idStr)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid user id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "invalid user id")
 		return
 	}
 
 	var req SetUserRoleRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	adminID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	u, err := h.svc.SetUserRole(r.Context(), adminID, userID, req.Role, h.logger)
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidRole) {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_role", Message: "role must be student, organizer, or admin"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status >= 500 {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to update role")
 			return
 		}
-		if errors.Is(err, authrepo.ErrUserNotFound) {
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "user not found"},
-			})
-			return
-		}
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to update role"},
-		})
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -178,48 +162,30 @@ func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleModerateEvent(w http.ResponseWriter, r *http.Request) {
 	eventID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if eventID == "" {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_id", Message: "missing event id"},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidID, "missing event id")
 		return
 	}
 
 	adminID, ok := authx.UserIDFromContext(r.Context())
 	if !ok {
-		_ = httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "unauthorized", Message: "missing user id"},
-		})
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
 		return
 	}
 
 	var req ModerateEventRequestDTO
 	if err := httpx.DecodeAndValidate(r, &req, h.v); err != nil {
-		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "invalid_request", Message: err.Error()},
-		})
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, err.Error())
 		return
 	}
 
 	st, err := h.svc.ModerateEvent(r.Context(), adminID, eventID, req.Action, req.Reason, h.logger)
 	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrInvalidEventID):
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_id", Message: "invalid event id"},
-			})
-		case errors.Is(err, service.ErrInvalidAction):
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_action", Message: "action must be approve or reject"},
-			})
-		case errors.Is(err, service.ErrEventNotFound):
-			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "not_found", Message: "event not found"},
-			})
-		default:
-			_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "internal_error", Message: "moderation failed"},
-			})
+		status, apiErr := httpx.MapDomainError(err)
+		if status >= 500 {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "moderation failed")
+			return
 		}
+		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
 	}
 
@@ -250,9 +216,7 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 	if s := strings.TrimSpace(q.Get("event_id")); s != "" {
 		id, err := uuid.Parse(s)
 		if err != nil {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid event_id"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid event_id")
 			return
 		}
 		filter.EventID = &id
@@ -260,9 +224,7 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 	if s := strings.TrimSpace(q.Get("admin_id")); s != "" {
 		id, err := uuid.Parse(s)
 		if err != nil {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid admin_id"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid admin_id")
 			return
 		}
 		filter.AdminID = &id
@@ -272,9 +234,7 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 	if s := q.Get("limit"); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 1 || v > 100 {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid limit"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid limit")
 			return
 		}
 		limit = v
@@ -285,9 +245,7 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 	if s := q.Get("offset"); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 0 || v > 100000 {
-			_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
-				Error: httpx.ErrorBody{Code: "invalid_request", Message: "invalid offset"},
-			})
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid offset")
 			return
 		}
 		offset = v
@@ -296,9 +254,7 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 
 	items, err := h.svc.ListModerationLogs(r.Context(), filter)
 	if err != nil {
-		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
-			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to list moderation logs"},
-		})
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to list moderation logs")
 		return
 	}
 
