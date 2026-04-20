@@ -85,6 +85,9 @@ export const paymentsAPI = {
 
 // ─── Admin ────────────────────────────────────────
 export const adminAPI = {
+  getEvents: (params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get<ListEventsResponse>('/admin/events', { params }),
+  
   moderateEvent: (eventId: string, data: ModerateEventRequest) =>
     api.post<ModerateEventResponse>(`/admin/events/${eventId}/moderate`, data),
 
