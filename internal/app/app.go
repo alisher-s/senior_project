@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -72,6 +73,13 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 		))
 
 		r.Get("/healthz", healthzHandler)
+
+		// Local dev static assets (e.g., event posters). Store URLs in events.cover_image_url.
+		// Example: http://localhost:8080/api/v1/static/posters/img1.jpg
+		if _, err := os.Stat("static"); err == nil {
+			fs := http.FileServer(http.Dir("static"))
+			r.Handle("/static/*", http.StripPrefix("/api/v1/static/", fs))
+		}
 
 		jwt := authx.NewJWT(cfg)
 
