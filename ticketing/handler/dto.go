@@ -40,8 +40,9 @@ type MyTicketsResponseDTO struct {
 
 // MyTicketItemDTO combines ticket fields and event summary for list responses.
 type MyTicketItemDTO struct {
-	TicketID   string `json:"ticket_id"`
-	Status     string `json:"status"`
+	TicketID string `json:"ticket_id"`
+	// Status is active, used, cancelled, or expired (expired is computed when the event has ended; not stored in DB).
+	Status     string `json:"status" enums:"active,used,cancelled,expired"`
 	QRHashHex  string `json:"qr_hash_hex"`
 	EventID    string `json:"event_id"`
 	EventTitle string `json:"event_title"`

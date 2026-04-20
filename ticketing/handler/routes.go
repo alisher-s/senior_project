@@ -54,7 +54,7 @@ type handler struct {
 }
 
 // @Summary List my tickets
-// @Description Returns tickets for the authenticated user (user_id from JWT). Empty `tickets` array if none.
+// @Description Returns tickets for the authenticated user (user_id from JWT). Empty `tickets` array if none. Each item `status` may be `active`, `used`, `cancelled`, or `expired` (the latter when the event end instant — `end_at` if set, otherwise `starts_at` — is strictly in the past; `end_at` is inclusive; not persisted in the database).
 // @Tags tickets
 // @Produce json
 // @Param Authorization header string true "Bearer access token"
@@ -71,7 +71,7 @@ func (h *handler) handleMyTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.svc.ListMyTickets(r.Context(), userID)
+	rows, err := h.svc.GetUserTickets(r.Context(), userID)
 	if err != nil {
 		h.logger.Error("list_my_tickets_failed",
 			"error", err,
@@ -202,7 +202,7 @@ func (h *handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Mark ticket as used
-// @Description Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **409** — `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, …
+// @Description Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **400** — `ticket_expired` (strictly after end instant; `end_at` is inclusive); **409** — `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, …
 // @Tags tickets
 // @Accept json
 // @Produce json
@@ -272,6 +272,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, repository.ErrCancellationNotAllowed), errors.Is(err, service.ErrCancellationNotAllowed):
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "cancellation_not_allowed", Message: "ticket cannot be cancelled after the event has started"},
+		})
+	case errors.Is(err, repository.ErrTicketExpired):
+		_ = httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "ticket_expired", Message: "ticket has expired"},
 		})
 	case errors.Is(err, repository.ErrCheckInNotOpenYet), errors.Is(err, service.ErrCheckInNotOpenYet):
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nu/student-event-ticketing-platform/ticketing/model"
@@ -140,7 +141,7 @@ func (p *Postgres) GetByEventAndUser(ctx context.Context, eventID uuid.UUID, use
 func (p *Postgres) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT t.id, t.event_id, t.user_id, t.status, t.qr_hash_hex, t.created_at,
-		       e.title, e.starts_at, e.location
+		       e.title, e.starts_at, e.end_at, e.location
 		FROM tickets t
 		INNER JOIN events e ON e.id = t.event_id
 		WHERE t.user_id = $1 AND t.status IN ('active', 'used')
@@ -153,18 +154,8 @@ func (p *Postgres) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]mode
 
 	var out []model.TicketWithEvent
 	for rows.Next() {
-		var row model.TicketWithEvent
-		if err := rows.Scan(
-			&row.ID,
-			&row.EventID,
-			&row.UserID,
-			&row.Status,
-			&row.QRHashHex,
-			&row.CreatedAt,
-			&row.EventTitle,
-			&row.EventStartsAt,
-			&row.EventLocation,
-		); err != nil {
+		row, err := scanTicketWithEventRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -176,6 +167,32 @@ func (p *Postgres) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]mode
 		out = []model.TicketWithEvent{}
 	}
 	return out, nil
+}
+
+func scanTicketWithEventRow(row interface {
+	Scan(dest ...any) error
+}) (model.TicketWithEvent, error) {
+	var r model.TicketWithEvent
+	var endAt pgtype.Timestamptz
+	if err := row.Scan(
+		&r.ID,
+		&r.EventID,
+		&r.UserID,
+		&r.Status,
+		&r.QRHashHex,
+		&r.CreatedAt,
+		&r.EventTitle,
+		&r.EventStartsAt,
+		&endAt,
+		&r.EventLocation,
+	); err != nil {
+		return model.TicketWithEvent{}, err
+	}
+	if endAt.Valid {
+		t := endAt.Time
+		r.EventEndsAt = &t
+	}
+	return r, nil
 }
 
 func (p *Postgres) CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error) {
@@ -324,9 +341,10 @@ func (p *Postgres) UseTicketByQRHash(ctx context.Context, qrHashHex string, now 
 
 	var evStatus string
 	var evStarts time.Time
+	var evEnds pgtype.Timestamptz
 	if err := tx.QueryRow(ctx, `
-		SELECT status, starts_at FROM events WHERE id = $1 FOR UPDATE
-	`, t.EventID).Scan(&evStatus, &evStarts); err != nil {
+		SELECT status, starts_at, end_at FROM events WHERE id = $1 FOR UPDATE
+	`, t.EventID).Scan(&evStatus, &evStarts, &evEnds); err != nil {
 		return model.Ticket{}, err
 	}
 	if evStatus == "cancelled" {
@@ -334,6 +352,14 @@ func (p *Postgres) UseTicketByQRHash(ctx context.Context, qrHashHex string, now 
 	}
 	if evStarts.After(now) {
 		return model.Ticket{}, ErrCheckInNotOpenYet
+	}
+	var endPtr *time.Time
+	if evEnds.Valid {
+		t := evEnds.Time
+		endPtr = &t
+	}
+	if now.After(model.EventEndInstant(evStarts, endPtr)) {
+		return model.Ticket{}, ErrTicketExpired
 	}
 
 	// Mark ticket as used (active -> used).
@@ -393,4 +419,3 @@ var _ interface {
 	CancelTicket(ctx context.Context, userID uuid.UUID, ticketID uuid.UUID, now time.Time, allowAfterEventStart bool) (model.Ticket, error)
 	UseTicketByQRHash(ctx context.Context, qrHashHex string, now time.Time) (model.Ticket, error)
 } = (*Postgres)(nil)
-

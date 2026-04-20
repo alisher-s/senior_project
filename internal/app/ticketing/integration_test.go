@@ -116,6 +116,15 @@ func TestFullLifecycleTicketing(t *testing.T) {
 	`).Scan(&userRolesOK); err != nil || !userRolesOK {
 		t.Skipf("user_roles table missing (apply docker/postgres/migrations/011_user_roles.sql): %v", err)
 	}
+	var hasEndAt bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'events' AND column_name = 'end_at'
+		)
+	`).Scan(&hasEndAt); err != nil || !hasEndAt {
+		t.Skipf("events.end_at column missing (apply migration 014_events_end_at.sql): %v", err)
+	}
 
 	rdb, err := redis.Connect(ctx, cfg)
 	if err != nil {
@@ -238,10 +247,12 @@ func TestFullLifecycleTicketing(t *testing.T) {
 		"event_id": eventID.String(),
 	}, http.StatusConflict)
 
-	// Step 4: check-in requires event to have started
-	_, err = pool.Exec(ctx, `UPDATE events SET starts_at = NOW() - interval '2 hours' WHERE id = $1`, eventID)
+	// Step 4: check-in requires event to have started and not ended (end_at extends the window when starts_at is already in the past).
+	_, err = pool.Exec(ctx, `
+		UPDATE events SET starts_at = NOW() - interval '2 hours', end_at = NOW() + interval '4 hours' WHERE id = $1
+	`, eventID)
 	if err != nil {
-		t.Fatalf("move event into past for check-in: %v", err)
+		t.Fatalf("open check-in window (starts in past, end in future): %v", err)
 	}
 
 	useBody := map[string]any{"qr_hash_hex": reg1.QRHashHex}
@@ -287,6 +298,15 @@ func TestReRegisterAfterCancel(t *testing.T) {
 		)
 	`).Scan(&userRolesOK); err != nil || !userRolesOK {
 		t.Skipf("user_roles table missing (apply docker/postgres/migrations/011_user_roles.sql): %v", err)
+	}
+	var hasEndAt bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'events' AND column_name = 'end_at'
+		)
+	`).Scan(&hasEndAt); err != nil || !hasEndAt {
+		t.Skipf("events.end_at column missing (apply migration 014_events_end_at.sql): %v", err)
 	}
 
 	rdb, err := redis.Connect(ctx, cfg)
@@ -384,6 +404,165 @@ func TestReRegisterAfterCancel(t *testing.T) {
 	}
 	if myList.Tickets[0].TicketID != reg2.TicketID {
 		t.Fatalf("my tickets: want ticket %s, got %s", reg2.TicketID, myList.Tickets[0].TicketID)
+	}
+}
+
+// TestTicketExpiredWhenEventEnds verifies that moving the event end into the past surfaces status `expired` on GET /tickets/my and blocks POST /tickets/use with ticket_expired.
+func TestTicketExpiredWhenEventEnds(t *testing.T) {
+	applyIntegrationHostDefaults(t)
+	ctx := context.Background()
+
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		t.Skipf("config: %v", err)
+	}
+
+	pool, err := db.Connect(ctx, cfg)
+	if err != nil {
+		t.Skipf("postgres: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var hasEndAt bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'events' AND column_name = 'end_at'
+		)
+	`).Scan(&hasEndAt); err != nil || !hasEndAt {
+		t.Skipf("events.end_at column missing (apply migration 014_events_end_at.sql): %v", err)
+	}
+
+	var one int
+	if err := pool.QueryRow(ctx, `SELECT 1 FROM events LIMIT 1`).Scan(&one); err != nil {
+		t.Skipf("schema/events missing: %v", err)
+	}
+	var userRolesOK bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'user_roles'
+		)
+	`).Scan(&userRolesOK); err != nil || !userRolesOK {
+		t.Skipf("user_roles table missing: %v", err)
+	}
+
+	rdb, err := redis.Connect(ctx, cfg)
+	if err != nil {
+		t.Skipf("redis: %v", err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	logger := slog.Default()
+	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx))
+	t.Cleanup(srv.Close)
+	base := strings.TrimRight(srv.URL, "/")
+
+	suffix := uuid.NewString()
+	studentEmail := "stu_exp_" + suffix + "@nu.edu.kz"
+	orgEmail := "org_exp_" + suffix + "@nu.edu.kz"
+	password := "TestPass1!long"
+
+	var eventID uuid.UUID
+	var studentID, orgID uuid.UUID
+
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if eventID != (uuid.UUID{}) {
+			_, _ = pool.Exec(cctx, `DELETE FROM tickets WHERE event_id = $1`, eventID)
+			_, _ = pool.Exec(cctx, `DELETE FROM events WHERE id = $1`, eventID)
+		}
+		for _, id := range []uuid.UUID{studentID, orgID} {
+			if id == (uuid.UUID{}) {
+				continue
+			}
+			_, _ = pool.Exec(cctx, `DELETE FROM users WHERE id = $1`, id)
+		}
+	})
+
+	aStu := mustRegister(t, base, studentEmail, password)
+	studentID = aStu.User.ID
+	aOrg := mustRegister(t, base, orgEmail, password)
+	orgID = aOrg.User.ID
+
+	_, err = pool.Exec(ctx, `UPDATE users SET role = 'organizer' WHERE id = $1`, orgID)
+	if err != nil {
+		t.Fatalf("promote organizer: %v", err)
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (admin cleanup): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'student', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (student): %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role, status) VALUES ($1, 'organizer', 'active')
+		ON CONFLICT (user_id, role) DO UPDATE SET status = 'active'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("sync user_roles (organizer): %v", err)
+	}
+
+	orgLogin := mustLogin(t, base, orgEmail, password)
+	if orgLogin.User.Role != "organizer" {
+		t.Fatalf("expected organizer role after update, got %q", orgLogin.User.Role)
+	}
+
+	starts := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	ev := mustCreateEvent(t, base, orgLogin.AccessToken, "expiry_"+suffix, "d", starts, 5)
+	eventID = uuid.MustParse(ev.ID)
+	_, err = pool.Exec(ctx, `UPDATE events SET moderation_status = 'approved' WHERE id = $1`, eventID)
+	if err != nil {
+		t.Fatalf("approve event for ticketing: %v", err)
+	}
+
+	reg := mustRegisterTicket(t, base, aStu.AccessToken, eventID.String())
+	if reg.Status != "active" {
+		t.Fatalf("ticket status: %q", reg.Status)
+	}
+
+	// Move event entirely into the past (end instant before now).
+	_, err = pool.Exec(ctx, `
+		UPDATE events SET starts_at = NOW() - interval '4 hours', end_at = NOW() - interval '1 hour' WHERE id = $1
+	`, eventID)
+	if err != nil {
+		t.Fatalf("move event end to past: %v", err)
+	}
+
+	myRes := getJSONExpect(t, base, "/api/v1/tickets/my", aStu.AccessToken, http.StatusOK)
+	defer myRes.Body.Close()
+	var myList myTicketsResponse
+	if err := json.NewDecoder(myRes.Body).Decode(&myList); err != nil {
+		t.Fatalf("decode my tickets: %v", err)
+	}
+	if len(myList.Tickets) != 1 {
+		t.Fatalf("my tickets: want 1 item, got %d", len(myList.Tickets))
+	}
+	if myList.Tickets[0].Status != "expired" {
+		t.Fatalf("expected status expired after event end moved to past, got %q", myList.Tickets[0].Status)
+	}
+
+	useRes := postJSON(t, base, "/api/v1/tickets/use", orgLogin.AccessToken, map[string]any{"qr_hash_hex": reg.QRHashHex})
+	defer useRes.Body.Close()
+	if useRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("tickets/use: want 400, got %d", useRes.StatusCode)
+	}
+	var apiErr struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(useRes.Body).Decode(&apiErr); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if apiErr.Error.Code != "ticket_expired" {
+		t.Fatalf("expected error code ticket_expired, got %q", apiErr.Error.Code)
 	}
 }
 

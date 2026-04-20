@@ -1078,7 +1078,7 @@ const docTemplate = `{
         },
         "/tickets/my": {
             "get": {
-                "description": "Returns tickets for the authenticated user (user_id from JWT). Empty ` + "`" + `tickets` + "`" + ` array if none.",
+                "description": "Returns tickets for the authenticated user (user_id from JWT). Empty ` + "`" + `tickets` + "`" + ` array if none. Each item ` + "`" + `status` + "`" + ` may be ` + "`" + `active` + "`" + `, ` + "`" + `used` + "`" + `, ` + "`" + `cancelled` + "`" + `, or ` + "`" + `expired` + "`" + ` (the latter when the event end instant — ` + "`" + `end_at` + "`" + ` if set, otherwise ` + "`" + `starts_at` + "`" + ` — is strictly in the past; ` + "`" + `end_at` + "`" + ` is inclusive; not persisted in the database).",
                 "produces": [
                     "application/json"
                 ],
@@ -1196,7 +1196,7 @@ const docTemplate = `{
         },
         "/tickets/use": {
             "post": {
-                "description": "Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **409** — ` + "`" + `ticket_already_used` + "`" + `, ` + "`" + `check_in_not_open` + "`" + `, ` + "`" + `ticket_cannot_be_used` + "`" + `, …",
+                "description": "Check-in by QR hash; requires organizer or admin. **401** — JWT; **403** — not organizer/admin; **400** — ` + "`" + `ticket_expired` + "`" + ` (strictly after end instant; ` + "`" + `end_at` + "`" + ` is inclusive); **409** — ` + "`" + `ticket_already_used` + "`" + `, ` + "`" + `check_in_not_open` + "`" + `, ` + "`" + `ticket_cannot_be_used` + "`" + `, …",
                 "consumes": [
                     "application/json"
                 ],
@@ -1640,7 +1640,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
+                    "description": "Status is active, used, cancelled, or expired (expired is computed when the event has ended; not stored in DB).",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "used",
+                        "cancelled",
+                        "expired"
+                    ]
                 },
                 "ticket_id": {
                     "type": "string"

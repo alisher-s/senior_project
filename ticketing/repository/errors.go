@@ -20,5 +20,6 @@ var (
 	ErrTicketAlreadyCancelled = errors.New("ticket already cancelled")
 	ErrTicketAlreadyUsed     = errors.New("ticket already used")
 	ErrTicketCannotBeUsed   = errors.New("ticket cannot be used")
+	ErrTicketExpired        = errors.New("ticket expired")
 )
 

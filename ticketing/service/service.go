@@ -8,8 +8,8 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/skip2/go-qrcode"
 	"github.com/google/uuid"
+	"github.com/skip2/go-qrcode"
 
 	"github.com/nu/student-event-ticketing-platform/ticketing/model"
 	"github.com/nu/student-event-ticketing-platform/ticketing/repository"
@@ -78,8 +78,30 @@ func (s *Service) UseTicketByQRHash(ctx context.Context, qrHashHex string) (mode
 	return s.repo.UseTicketByQRHash(ctx, qrHashHex, now)
 }
 
-// ListMyTickets returns all tickets for the user with basic event info (empty slice if none).
-func (s *Service) ListMyTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
-	return s.repo.GetUserTickets(ctx, userID)
+func overlayTicketExpiry(t model.TicketWithEvent, now time.Time) model.TicketWithEvent {
+	if t.Status != model.TicketStatusActive {
+		return t
+	}
+	if now.After(model.EventEndInstant(t.EventStartsAt, t.EventEndsAt)) {
+		t.Status = model.TicketStatusExpired
+	}
+	return t
 }
 
+// GetUserTickets returns tickets for the user with event metadata. Active tickets are returned with status `expired` when the event end time has passed (computed from events.end_at or events.starts_at).
+func (s *Service) GetUserTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
+	rows, err := s.repo.GetUserTickets(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	for i := range rows {
+		rows[i] = overlayTicketExpiry(rows[i], now)
+	}
+	return rows, nil
+}
+
+// ListMyTickets is an alias for GetUserTickets.
+func (s *Service) ListMyTickets(ctx context.Context, userID uuid.UUID) ([]model.TicketWithEvent, error) {
+	return s.GetUserTickets(ctx, userID)
+}

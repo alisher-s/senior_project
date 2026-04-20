@@ -197,6 +197,13 @@ definitions:
       qr_hash_hex:
         type: string
       status:
+        description: Status is active, used, cancelled, or expired (expired is computed
+          when the event has ended; not stored in DB).
+        enum:
+        - active
+        - used
+        - cancelled
+        - expired
         type: string
       ticket_id:
         type: string
@@ -1168,7 +1175,10 @@ paths:
   /tickets/my:
     get:
       description: Returns tickets for the authenticated user (user_id from JWT).
-        Empty `tickets` array if none.
+        Empty `tickets` array if none. Each item `status` may be `active`, `used`,
+        `cancelled`, or `expired` (the latter when the event end instant — `end_at`
+        if set, otherwise `starts_at` — is strictly in the past; `end_at` is inclusive;
+        not persisted in the database).
       parameters:
       - description: Bearer access token
         in: header
@@ -1251,8 +1261,8 @@ paths:
       consumes:
       - application/json
       description: Check-in by QR hash; requires organizer or admin. **401** — JWT;
-        **403** — not organizer/admin; **409** — `ticket_already_used`, `check_in_not_open`,
-        `ticket_cannot_be_used`, …
+        **403** — not organizer/admin; **400** — `ticket_expired` (strictly after end instant; `end_at` is inclusive); **409** — `ticket_already_used`,
+        `check_in_not_open`, `ticket_cannot_be_used`, …
       parameters:
       - description: Bearer access token (organizer or admin)
         in: header

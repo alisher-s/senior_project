@@ -458,7 +458,7 @@ curl -sS -X POST http://localhost:8080/api/v1/tickets/550e8400-e29b-41d4-a716-44
 | **Roles** | `organizer`, `admin` |
 | **Request body** | `qr_hash_hex` (string, required). |
 | **Success** | **200** — `ticket_id`, `event_id`, `user_id`, `status` (`used`) |
-| **Errors** | **404** `ticket_not_found`; **409** `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, etc. |
+| **Errors** | **404** `ticket_not_found`; **400** `ticket_expired` (event end instant has passed; **expires strictly after** `end_at` — `end_at` is **inclusive**); **409** `ticket_already_used`, `check_in_not_open`, `ticket_cannot_be_used`, etc. |
 
 ---
 
@@ -641,13 +641,13 @@ JSON field names match API responses. **Nullable** fields are noted.
   "ticket_id": "string (UUID)",
   "event_id": "string (UUID)",
   "user_id": "string (UUID)",
-  "status": "active | used | cancelled",
+  "status": "active | used | cancelled | expired",
   "qr_png_base64": "string (standard Base64 PNG, register only)",
   "qr_hash_hex": "string (hex)"
 }
 ```
 
-**`GET /tickets/my` item:** `ticket_id`, `status`, `qr_hash_hex`, `event_id`, `event_title`, `event_date` (RFC3339 string). No `qr_png_base64` in list.
+**`GET /tickets/my` item:** `ticket_id`, `status`, `qr_hash_hex`, `event_id`, `event_title`, `event_date` (RFC3339 string). No `qr_png_base64` in list. The value **`expired`** is returned when the ticket is still **`active`** in the database but the event end instant (`end_at` if set, otherwise `starts_at`) is in the past (not stored as a DB status).
 
 ### Payment (when implemented; stub returns 501 today)
 
@@ -702,6 +702,7 @@ There is **no** `fields` array: validation failures use **`invalid_request`** wi
 |------|------|------|
 | **400** | `invalid_request` | Invalid JSON, unknown fields (where disallowed), or failed struct validation (missing fields, wrong types, tag violations). Example: `{"error":{"code":"invalid_request","message":"Key: 'RegisterRequestDTO.Password' Error:Field validation for 'Password' failed on the 'min' tag"}}` |
 | **400** | `invalid_id` | Malformed UUID in path or body. |
+| **400** | `ticket_expired` | QR check-in **strictly after** the event end instant (`end_at` if set, otherwise `starts_at`; `end_at` is **inclusive**). |
 | **400** | `email_not_allowed` | Registration email domain not allowed. |
 | **400** | `invalid_role` / `invalid_action` | Admin or moderation validation. |
 | **401** | `missing_authorization`, `invalid_authorization`, `invalid_token`, `invalid_token_claims` | Missing/invalid Bearer token or claims. |
@@ -739,7 +740,7 @@ Event **`status`** (`draft` / `published` / `cancelled`) is separate from modera
 
 ## Ticket lifecycle
 
-Current ticket **`status`** values in the API: **`active`**, **`used`**, **`cancelled`**.
+Current ticket **`status`** values in the API: **`active`**, **`used`**, **`cancelled`**, and **`expired`** (computed in responses when the event has ended; not stored in `tickets.status`).
 
 ```
                     +------------------+
@@ -752,21 +753,24 @@ Current ticket **`status`** values in the API: **`active`**, **`used`**, **`canc
                       |   active    |  (QR issued in response)
                       +------+------+
                              |
-              +--------------+---------------+
-              |                              |
-              v                              v
-    +------------------+           +------------------+
-    | POST /tickets/use|           | POST .../cancel  |
-    | (organizer/admin)|           | (student)        |
-    +--------+---------+           +--------+---------+
-             |                                |
-             v                                v
-      +-------------+                  +-------------+
-      |    used     |                  | cancelled   |
-      +-------------+                  +-------------+
+         +-------------------+-------------------+
+         |                   |                   |
+         v                   v                   v
+  (event ended,        +-----------+    +------------------+
+   list/read-only)     | POST .../ |    | POST /tickets/use|
+         |             | cancel    |    | (organizer/admin)|
+         v             +-----+-----+    +--------+---------+
+    +----------+             |                 |
+    | expired* |             v                 v
+    +----------+      +-------------+   +-------------+
+                        | cancelled   |   |    used     |
+                        +-------------+   +-------------+
 ```
 
+\* **`expired`** appears in **`GET /tickets/my`** (and similar) when the stored status is **`active`** but **`now` is strictly after** the event end instant (`events.end_at` if set, otherwise `events.starts_at`). The instant itself is **inclusive** (i.e., not expired when `now == end_instant`). Check-in is rejected with **`ticket_expired`**.
+
 - **`active`:** valid ticket; show QR (`qr_png_base64` / `qr_hash_hex` from registration).
+- **`expired`:** same row as active in DB; API surfaces **`expired`** after the event end time so clients can hide or disable QR.
 - **`used`:** check-in completed; show as “used” / hide QR for re-entry per product rules.
 - **`cancelled`:** show as cancelled.
 
