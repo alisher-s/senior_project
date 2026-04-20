@@ -16,6 +16,9 @@ var (
 	// ErrCheckInNotOpenYet is returned when scanning a ticket before the event start time.
 	ErrCheckInNotOpenYet = errors.New("check-in is not open yet")
 
+	// ErrEventRequiresPayment is returned when a student tries to register directly for a paid event.
+	ErrEventRequiresPayment = errors.New("event requires payment")
+
 	ErrTicketNotFound       = errors.New("ticket not found")
 	ErrTicketAlreadyCancelled = errors.New("ticket already cancelled")
 	ErrTicketAlreadyUsed     = errors.New("ticket already used")

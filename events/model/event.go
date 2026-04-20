@@ -24,18 +24,21 @@ const (
 )
 
 type Event struct {
-	ID                  uuid.UUID
-	Title               string
-	Description         string
-	CoverImageURL       string
-	StartsAt            time.Time
-	CapacityTotal      int
-	CapacityAvailable  int
-	Status              EventStatus
-	ModerationStatus    ModerationStatus
-	ModeratedBy         *uuid.UUID
-	OrganizerID         *uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                uuid.UUID
+	Title             string
+	Description       string
+	CoverImageURL     string
+	StartsAt          time.Time
+	CapacityTotal     int
+	CapacityAvailable int
+	Status            EventStatus
+	ModerationStatus  ModerationStatus
+	ModeratedBy       *uuid.UUID
+	OrganizerID       *uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	// PriceAmount is in tenge for KZT (zero-decimal) or cents for USD. 0 = free event.
+	PriceAmount   int64
+	PriceCurrency string
 }
 

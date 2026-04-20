@@ -57,7 +57,11 @@ type Config struct {
 
 	Payments struct {
 		// WebhookSecret is used to verify payment provider webhooks (HMAC-SHA256 over raw request body).
-		WebhookSecret string
+		WebhookSecret       string
+		StripeSecretKey     string
+		StripeWebhookSecret string
+		StripeSuccessURL    string
+		StripeCancelURL     string
 	}
 
 	Firebase struct {
@@ -124,6 +128,10 @@ func LoadFromEnv() (Config, error) {
 
 	// Payments
 	cfg.Payments.WebhookSecret = getenvDefault("PAYMENTS_WEBHOOK_SECRET", "")
+	cfg.Payments.StripeSecretKey = os.Getenv("STRIPE_SECRET_KEY")
+	cfg.Payments.StripeWebhookSecret = os.Getenv("STRIPE_WEBHOOK_SECRET")
+	cfg.Payments.StripeSuccessURL = getenvDefault("STRIPE_SUCCESS_URL", "http://localhost:8080/payment-success")
+	cfg.Payments.StripeCancelURL = getenvDefault("STRIPE_CANCEL_URL", "http://localhost:8080/payment-cancel")
 
 	// Firebase (optional — push notifications disabled when unset)
 	cfg.Firebase.ServerKey = os.Getenv("FIREBASE_SERVER_KEY")

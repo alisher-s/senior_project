@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,10 +19,13 @@ func New(repo repository.EventRepository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) Create(ctx context.Context, title, description, coverImageURL string, startsAt time.Time, capacityTotal int, organizerID uuid.UUID) (model.Event, error) {
+func (s *Service) Create(ctx context.Context, title, description, coverImageURL string, startsAt time.Time, capacityTotal int, priceAmount int64, priceCurrency string, organizerID uuid.UUID) (model.Event, error) {
 	org := organizerID
+	if priceCurrency == "" {
+		priceCurrency = "KZT"
+	}
 	e := model.Event{
-		Title:              title,
+		Title:             title,
 		Description:       description,
 		CoverImageURL:     coverImageURL,
 		StartsAt:          startsAt,
@@ -29,12 +33,10 @@ func (s *Service) Create(ctx context.Context, title, description, coverImageURL 
 		CapacityAvailable: capacityTotal,
 		Status:            model.EventStatusPublished,
 		OrganizerID:       &org,
+		PriceAmount:       priceAmount,
+		PriceCurrency:     strings.ToUpper(priceCurrency),
 	}
-	ev, err := s.repo.Create(ctx, e)
-	if err != nil {
-		return model.Event{}, err
-	}
-	return ev, nil
+	return s.repo.Create(ctx, e)
 }
 
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
@@ -45,23 +47,20 @@ func (s *Service) List(ctx context.Context, filter repository.EventFilter) ([]mo
 	return s.repo.List(ctx, filter)
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, coverImageURL *string, startsAt *time.Time, capacityTotal *int, status *model.EventStatus) (model.Event, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, title *string, description *string, coverImageURL *string, startsAt *time.Time, capacityTotal *int, priceAmount *int64, priceCurrency *string, status *model.EventStatus) (model.Event, error) {
 	patch := repository.EventPatch{
-		Title:             title,
-		Description:       description,
-		CoverImageURL:     coverImageURL,
-		StartsAt:          startsAt,
-		CapacityTotal:     capacityTotal,
-		Status:            status,
+		Title:         title,
+		Description:   description,
+		CoverImageURL: coverImageURL,
+		StartsAt:      startsAt,
+		CapacityTotal: capacityTotal,
+		Status:        status,
+		PriceAmount:   priceAmount,
+		PriceCurrency: priceCurrency,
 	}
-	updated, err := s.repo.Update(ctx, id, patch)
-	if err != nil {
-		return model.Event{}, err
-	}
-	return updated, nil
+	return s.repo.Update(ctx, id, patch)
 }
 
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
 }
-

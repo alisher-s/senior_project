@@ -89,7 +89,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, organizerID)
+	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, req.PriceAmount, req.PriceCurrency, organizerID)
 	if err != nil {
 		_ = httpx.WriteJSON(w, http.StatusInternalServerError, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "internal_error", Message: "failed to create event"},
@@ -311,7 +311,7 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		statusPatch = &s
 	}
 
-	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, statusPatch)
+	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, req.PriceAmount, req.PriceCurrency, statusPatch)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			_ = httpx.WriteJSON(w, http.StatusNotFound, httpx.ErrorResponse{
@@ -475,5 +475,8 @@ func eventToDTO(ev model.Event) EventDTO {
 		CapacityAvailable: ev.CapacityAvailable,
 		Status:            string(ev.Status),
 		ModerationStatus:  string(ev.ModerationStatus),
+		PriceAmount:       ev.PriceAmount,
+		PriceCurrency:     ev.PriceCurrency,
+		IsFree:            ev.PriceAmount == 0,
 	}
 }

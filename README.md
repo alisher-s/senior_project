@@ -2,6 +2,13 @@
 
 ## Quick start (local development)
 
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose)
+- That's it — no Go, Postgres, or Redis installation needed locally.
+
+### Steps
+
 1. **Clone the repository**
 
 ```bash
@@ -9,13 +16,13 @@ git clone <your-repo-url> senior_project
 cd senior_project
 ```
 
-2. **Environment file**
+2. **Create your `.env` file**
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` if you need SMTP for outbound email (optional in local dev). Docker Compose also reads variables from this file for the `api` service.
+Open `.env` and fill in your credentials (see [What each person needs](#what-each-person-needs) below).
 
 3. **Start the stack**
 
@@ -23,7 +30,7 @@ Edit `.env` if you need SMTP for outbound email (optional in local dev). Docker 
 docker compose up --build
 ```
 
-This builds the API image, starts **api** (port **8080**), **postgres**, and **redis**.
+This builds the API image and starts **api** (port **8080**), **postgres**, and **redis**.
 
 4. **Verify the API**
 
@@ -31,29 +38,59 @@ This builds the API image, starts **api** (port **8080**), **postgres**, and **r
 curl -sS http://localhost:8080/api/v1/healthz
 ```
 
-Expected JSON: `{"status":"ok"}`.
+Expected: `{"status":"ok"}`.
 
-5. **Check Postgres and Redis**
-
-```bash
-docker compose ps
-```
-
-You should see `postgres`, `redis`, and `api` running. Ports on the host:
-
-- **PostgreSQL:** `localhost:5432` (and `localhost:5433` maps to the same container for tools that need an alternate host port)
-- **Redis:** `localhost:6379`
-
-Optional connectivity checks:
-
-```bash
-nc -zv localhost 5432
-nc -zv localhost 6379
-```
-
-6. **Swagger UI**
+5. **Swagger UI (interactive docs)**
 
 Open: **http://localhost:8080/api/v1/swagger/index.html**
+
+6. **Stop the stack**
+
+```bash
+docker compose down
+```
+
+To also wipe the database volume: `docker compose down -v`
+
+---
+
+## What each person needs
+
+Everyone who runs this project locally needs their **own** credentials in their `.env`. **Never share your personal keys.**
+
+### Email (SMTP) — optional
+
+Emails are only used for ticket confirmation and event update notifications. The app runs fine without them (uses a no-op sender).
+
+**Option A — Gmail App Password (recommended, uses your own Gmail):**
+1. Enable 2-Step Verification on your Google account
+2. Go to [myaccount.google.com](https://myaccount.google.com) → Security → App Passwords
+3. Create an App Password for "Mail"
+4. In `.env`: set `SMTP_USERNAME` and `SMTP_FROM` to your Gmail, `SMTP_PASSWORD` to the 16-character App Password, `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`
+
+**Option B — Mailtrap (free sandbox, emails never go to real inboxes):**
+1. Sign up free at [mailtrap.io](https://mailtrap.io) → Email Testing → Inboxes → SMTP Settings
+2. Copy the credentials into `.env`
+
+### Stripe payments — optional
+
+Payments are optional. Without Stripe configured, all payment endpoints return `501 Not Implemented` — the rest of the app (free events, ticketing, auth, admin) works normally.
+
+To enable payments:
+
+1. Copy `STRIPE_SECRET_KEY` from the shared `.env` (the `sk_test_…` value) — this can be shared for local testing.
+2. Install the [Stripe CLI](https://stripe.com/docs/stripe-cli)
+3. In one terminal, run:
+   ```bash
+   stripe listen --forward-to localhost:8080/api/v1/payments/stripe/webhook
+   ```
+4. Copy the `whsec_…` key it prints → paste it as `STRIPE_WEBHOOK_SECRET` in your `.env`
+   > **This key is session-specific** — you must run `stripe listen` yourself every time. You cannot reuse someone else's `whsec_…`.
+5. Restart: `docker compose up --build`
+
+Test card: **`4242 4242 4242 4242`**, any future expiry, any CVC.
+
+> **Default currency is KZT.** Create paid events with `"price_amount": 5000` = 5000 ₸ (KZT is zero-decimal — no sub-units). Minimum Stripe charge is 50 KZT.
 
 ---
 
@@ -112,14 +149,25 @@ Variables are loaded from the process environment (e.g. `.env` with Docker Compo
 |----------|----------|---------|-------------|
 | `SMTP_HOST` | No | *(empty)* | SMTP server host; if empty, the email worker uses a no-op sender. |
 | `SMTP_PORT` | No | `587` | SMTP port. |
+| `SMTP_USERNAME` | No | *(same as `SMTP_FROM`)* | Auth username — use explicitly for Mailtrap / Gmail App Passwords. |
 | `SMTP_FROM` | No | *(empty)* | From address for outbound mail. |
-| `SMTP_PASSWORD` | No | *(empty)* | SMTP password. |
+| `SMTP_PASSWORD` | No | *(empty)* | SMTP password / App Password. |
 
-### Payments
+### Payments (Stripe)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PAYMENTS_WEBHOOK_SECRET` | Yes (unless `APP_ENV=development` with empty value) | *(empty; dev default applied)* | Shared secret for **HMAC-SHA256** verification of `POST /payments/webhook` bodies (`X-Signature`). |
+| `PAYMENTS_WEBHOOK_SECRET` | Yes (unless `APP_ENV=development`) | *(dev default applied)* | Shared secret for **HMAC-SHA256** verification of `POST /payments/webhook` bodies (`X-Signature`). |
+| `STRIPE_SECRET_KEY` | No | *(empty — payments disabled)* | Stripe secret key (`sk_test_…` or `sk_live_…`). When set, payments are live. |
+| `STRIPE_WEBHOOK_SECRET` | No | *(empty)* | Stripe webhook signing secret (`whsec_…`). Get from `stripe listen` CLI or Stripe dashboard. |
+| `STRIPE_SUCCESS_URL` | No | `http://localhost:8080/payment-success` | URL Stripe redirects to after successful payment. |
+| `STRIPE_CANCEL_URL` | No | `http://localhost:8080/payment-cancel` | URL Stripe redirects to when user cancels payment. |
+
+### Push notifications (Firebase)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FIREBASE_SERVER_KEY` | No | *(empty — push disabled)* | FCM legacy server key for push notifications. |
 
 ---
 
@@ -338,16 +386,26 @@ curl -sS "http://localhost:8080/api/v1/events?limit=10&offset=0&q=hackathon&star
 |--|--|
 | **Auth** | Yes |
 | **Roles** | `organizer`, `admin` |
-| **Request body** | `title` (string, required, 3–120), `description` (string, max 2000), `cover_image_url` (string, optional, max 2048), `starts_at` (string/time, RFC3339, required), `capacity_total` (integer, required, 1–100000). |
+| **Request body** | `title` (required, 3–120), `description` (max 2000), `cover_image_url` (optional), `starts_at` (RFC3339, required), `capacity_total` (required, 1–100000), `price_amount` (integer ≥ 0, default 0 = free), `price_currency` (3-letter ISO, default `KZT`). |
 | **Success** | **201** — `EventDTO` |
 | **Errors** | **401** / **403**; **400** `invalid_request`; **500** `internal_error`. |
 
+**Free event (no payment needed):**
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <organizer_access_token>" \
-  -d '{"title":"NU Hackathon","description":"Annual hackathon","starts_at":"2026-06-01T10:00:00Z","capacity_total":100,"cover_image_url":"https://example.com/cover.jpg"}'
+  -d '{"title":"NU Hackathon","description":"Annual hackathon","starts_at":"2026-06-01T10:00:00Z","capacity_total":100}'
 ```
+
+**Paid event (5000 KZT):**
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/events \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <organizer_access_token>" \
+  -d '{"title":"NU Gala","starts_at":"2026-06-01T18:00:00Z","capacity_total":50,"price_amount":5000,"price_currency":"KZT"}'
+```
+> **KZT is a zero-decimal currency** — `price_amount` is in tenge directly (`5000` = 5000 ₸). No sub-units. Minimum for Stripe is 50 KZT.
 
 #### `GET /api/v1/events/{id}`
 
@@ -417,7 +475,9 @@ curl -sS http://localhost:8080/api/v1/tickets/my \
 | **Roles** | `student` |
 | **Request body** | `event_id` (string UUID, required). |
 | **Success** | **201** — `ticket_id`, `event_id`, `user_id`, `status`, `qr_png_base64`, `qr_hash_hex` |
-| **Errors** | **400**; **404** `not_found`; **409** `capacity_full`, `already_registered`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, etc. |
+| **Errors** | **400**; **404** `not_found`; **402** `payment_required` (paid event — use `/payments/initiate`); **409** `capacity_full`, `already_registered`, `event_not_approved`, `event_not_published`, `event_cancelled`, `registration_closed`, etc. |
+
+> **Only for free events** (`price_amount = 0`). For paid events use `POST /payments/initiate` — the ticket is created automatically after successful payment.
 
 **QR flow:**
 
@@ -464,7 +524,13 @@ curl -sS -X POST http://localhost:8080/api/v1/tickets/550e8400-e29b-41d4-a716-44
 
 ### Payment endpoints
 
-> **Important:** The payment **repository is currently a stub**. `POST /payments/initiate` and `POST /payments/webhook` return **501 Not Implemented** with `error.code` **`not_implemented`** until a real payment backend is wired. Do not treat these as production-ready.
+Payments are powered by **Stripe** (test mode). Set `STRIPE_SECRET_KEY` in `.env` to enable. Without it, all payment endpoints return **501 Not Implemented**.
+
+**Full flow for paid events:**
+1. Call `POST /payments/initiate` → get `provider_url` (Stripe Checkout page)
+2. Open `provider_url` in browser → enter test card `4242 4242 4242 4242`, any expiry/CVC
+3. Stripe calls `POST /payments/stripe/webhook` → server **automatically creates the ticket**
+4. User retrieves ticket + QR via `GET /tickets/my`
 
 #### `POST /api/v1/payments/initiate`
 
@@ -472,36 +538,58 @@ curl -sS -X POST http://localhost:8080/api/v1/tickets/550e8400-e29b-41d4-a716-44
 |--|--|
 | **Auth** | Yes |
 | **Roles** | `student`, `organizer`, `admin` |
-| **Request body** | `event_id` (string, required), `amount` (integer, required, `> 0`), `currency` (string, required, exactly 3 letters). |
-| **Success** | **201** — `payment_id`, `provider_ref`, `provider_url` *(when implemented)* |
-| **Errors** | **501** `not_implemented` *(current stub)*; **400**; **401**; **500**. |
+| **Request body** | `event_id` (string UUID, required). Amount and currency are read from the event — clients cannot override them. |
+| **Success** | **201** — `payment_id`, `provider_ref`, `provider_url` (open this URL in browser to pay), `amount`, `currency` |
+| **Errors** | **400** `free_event` (use `/tickets/register` instead); **404** `not_found`; **501** `not_implemented` (Stripe not configured); **401**; **500**. |
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/payments/initiate \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <access_token>" \
-  -d '{"event_id":"550e8400-e29b-41d4-a716-446655440000","amount":1000,"currency":"KZT"}'
+  -H "Authorization: Bearer <student_access_token>" \
+  -d '{"event_id":"550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
-**Intended flow (when payments are enabled):** for paid events, clients would register for an event, call initiate, open `payment_url`, and the provider would call the webhook; on success, ticketing would issue the ticket and QR. **Today:** ticket registration does not depend on this stub; **`POST /tickets/register`** issues a ticket with status **`active`** and QR when business rules pass. There is **no** separate `pending_payment` ticket status in the API schema.
+Response:
+```json
+{
+  "payment_id": "uuid",
+  "provider_ref": "cs_test_...",
+  "provider_url": "https://checkout.stripe.com/c/pay/cs_test_...",
+  "amount": 5000,
+  "currency": "KZT"
+}
+```
+
+Open `provider_url` → pay → ticket is auto-created by webhook.
+
+#### `POST /api/v1/payments/stripe/webhook`
+
+Stripe-to-server webhook. **Do not call directly.** Verified using `Stripe-Signature` header and `STRIPE_WEBHOOK_SECRET`.
+
+Handles:
+- `checkout.session.completed` with `payment_status=paid` → creates ticket (idempotent)
+- `checkout.session.expired` → marks payment canceled
+
+For local testing, use Stripe CLI:
+```bash
+stripe listen --forward-to localhost:8080/api/v1/payments/stripe/webhook
+```
 
 #### `POST /api/v1/payments/webhook`
 
+Generic HMAC webhook for non-Stripe providers.
+
 | | |
 |--|--|
-| **Auth** | No (provider callback; not for browsers) |
-| **Headers** | **`X-Signature`**: hex-encoded **HMAC-SHA256** of the **raw** request body using `PAYMENTS_WEBHOOK_SECRET`. |
-| **Request body** | `provider_ref` (string, required), `status` (string, required). |
-| **Success** | **200** — `{}` |
-| **Errors** | **401** `missing_signature`; **403** `invalid_signature`; **404** `not_found`; **501** `not_implemented` *(stub)*; **400** `invalid_request`. |
+| **Auth** | No |
+| **Headers** | **`X-Signature`**: hex HMAC-SHA256 of raw body using `PAYMENTS_WEBHOOK_SECRET`. |
+| **Request body** | `provider_ref` (string, required), `status` (`pending\|succeeded\|failed\|canceled`). |
 
 ```bash
 BODY='{"provider_ref":"ref-123","status":"succeeded"}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "dev_payments_webhook_secret_change_me" -binary | xxd -p -c 256)
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "dev_webhook_secret_12345" -binary | xxd -p -c 256)
 curl -sS -X POST http://localhost:8080/api/v1/payments/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Signature: $SIG" \
-  -d "$BODY"
+  -H "Content-Type: application/json" -H "X-Signature: $SIG" -d "$BODY"
 ```
 
 ---
@@ -628,11 +716,16 @@ JSON field names match API responses. **Nullable** fields are noted.
   "capacity_total": 0,
   "capacity_available": 0,
   "status": "draft | published | cancelled",
-  "moderation_status": "pending | approved | rejected"
+  "moderation_status": "pending | approved | rejected",
+  "price_amount": 0,
+  "price_currency": "KZT",
+  "is_free": true
 }
 ```
 
-- `cover_image_url`: omitted or empty when not set (`omitempty`).
+- `price_amount`: in the smallest currency unit. KZT (the default) is zero-decimal — no sub-units, so `5000` = 5000 ₸. `0` = free event.
+- `is_free`: convenience boolean — `true` when `price_amount == 0`.
+- `cover_image_url`: omitted when not set.
 
 ### Ticket (register / cancel / use responses; list item shapes differ slightly)
 
@@ -712,9 +805,11 @@ There is **no** `fields` array: validation failures use **`invalid_request`** wi
 | **403** | `invalid_signature` | Webhook HMAC verification failed. |
 | **403** | `organizer_request_forbidden` | Non-student requested organizer role. |
 | **404** | `not_found` | Entity missing or hidden (e.g. unapproved event for public `GET`). |
+| **402** | `payment_required` | Paid event — use `POST /payments/initiate` instead of `/tickets/register`. |
 | **409** | `email_exists`, `already_registered`, `capacity_full`, … | Business conflicts (see handlers). |
+| **400** | `free_event` | Called `/payments/initiate` for a free event — use `/tickets/register`. |
 | **429** | `rate_limited` | Too many requests; check `Retry-After`. |
-| **501** | `not_implemented` | Payment (and similar) not enabled. |
+| **501** | `not_implemented` | Stripe not configured (`STRIPE_SECRET_KEY` not set). |
 
 ### Client handling
 
@@ -770,7 +865,7 @@ Current ticket **`status`** values in the API: **`active`**, **`used`**, **`canc
 - **`used`:** check-in completed; show as “used” / hide QR for re-entry per product rules.
 - **`cancelled`:** show as cancelled.
 
-**Payments:** there is no `pending_payment` status on tickets in this API. **`POST /payments/initiate`** is currently **501**. Free vs paid pricing is not modeled on events; all successful registrations follow the flow above.
+**Paid event flow:** payment success auto-creates the ticket (no separate register step needed). The ticket enters the same `active → used | cancelled` lifecycle as free tickets. Students retrieve their QR via `GET /tickets/my` after paying.
 
 ---
 

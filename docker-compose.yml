@@ -31,12 +31,18 @@ services:
       AUTH_BCRYPT_COST: 12
       PAYMENTS_WEBHOOK_SECRET: dev_payments_webhook_secret_change_me
 
-      # Notifications SMTP: set in repo-root `.env`. See `.env.example`.
+      # Notifications SMTP
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
+      # Stripe payments (leave empty to keep payments disabled)
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8080/payment-success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8080/payment-cancel}
     depends_on:
       postgres:
         condition: service_started

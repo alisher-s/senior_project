@@ -55,6 +55,8 @@ func scanEventRow(row rowScanner) (model.Event, error) {
 		&orgID,
 		&e.CreatedAt,
 		&e.UpdatedAt,
+		&e.PriceAmount,
+		&e.PriceCurrency,
 	)
 	if err != nil {
 		return model.Event{}, err
@@ -75,11 +77,11 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 		orgID = *e.OrganizerID
 	}
 	row := p.pool.QueryRow(ctx, `
-		INSERT INTO events (id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status, organizer_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO events (id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status, organizer_id, price_amount, price_currency)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
-			moderation_status, moderated_by, organizer_id, created_at, updated_at
-	`, id, e.Title, e.Description, e.CoverImageURL, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st, orgID)
+			moderation_status, moderated_by, organizer_id, created_at, updated_at, price_amount, price_currency
+	`, id, e.Title, e.Description, e.CoverImageURL, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st, orgID, e.PriceAmount, e.PriceCurrency)
 	created, err := scanEventRow(row)
 	if err != nil {
 		return model.Event{}, err
@@ -90,7 +92,7 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
 	row := p.pool.QueryRow(ctx, `
 		SELECT id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
-			moderation_status, moderated_by, organizer_id, created_at, updated_at
+			moderation_status, moderated_by, organizer_id, created_at, updated_at, price_amount, price_currency
 		FROM events
 		WHERE id = $1
 	`, id)
@@ -137,11 +139,8 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 
 	query := fmt.Sprintf(`
 		SELECT id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
-			moderation_status, moderated_by, organizer_id, created_at, updated_at
-		FROM events
-		WHERE %s
-		ORDER BY starts_at DESC
-		LIMIT $%d OFFSET $%d
+			moderation_status, moderated_by, organizer_id, created_at, updated_at, price_amount, price_currency
+		FROM events WHERE %s ORDER BY starts_at DESC LIMIT $%d OFFSET $%d
 	`, strings.Join(where, " AND "), argPos, argPos+1)
 	args = append(args, filter.Limit, filter.Offset)
 
@@ -210,6 +209,16 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		args = append(args, string(*patch.Status))
 		argPos++
 	}
+	if patch.PriceAmount != nil {
+		set = append(set, fmt.Sprintf("price_amount = $%d", argPos))
+		args = append(args, *patch.PriceAmount)
+		argPos++
+	}
+	if patch.PriceCurrency != nil {
+		set = append(set, fmt.Sprintf("price_currency = $%d", argPos))
+		args = append(args, *patch.PriceCurrency)
+		argPos++
+	}
 
 	if len(set) == 0 {
 		return p.GetByID(ctx, id)
@@ -221,7 +230,7 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		SET %s, updated_at = NOW()
 		WHERE id = $%d
 		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
-			moderation_status, moderated_by, organizer_id, created_at, updated_at
+			moderation_status, moderated_by, organizer_id, created_at, updated_at, price_amount, price_currency
 	`, strings.Join(set, ", "), argPos)
 
 	row := p.pool.QueryRow(ctx, query, args...)
@@ -241,7 +250,7 @@ func (p *Postgres) UpdateModeration(ctx context.Context, id uuid.UUID, st model.
 		SET moderation_status = $2, moderated_by = $3, updated_at = NOW()
 		WHERE id = $1
 		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
-			moderation_status, moderated_by, organizer_id, created_at, updated_at
+			moderation_status, moderated_by, organizer_id, created_at, updated_at, price_amount, price_currency
 	`, id, string(st), moderatedBy)
 	e, err := scanEventRow(row)
 	if err != nil {

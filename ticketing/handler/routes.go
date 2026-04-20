@@ -152,6 +152,18 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Block direct registration for paid events — payment must go through /payments/initiate.
+	var priceAmount int64
+	if h.db != nil {
+		_ = h.db.QueryRow(r.Context(),
+			`SELECT price_amount FROM events WHERE id = $1`, eventID,
+		).Scan(&priceAmount)
+	}
+	if priceAmount > 0 {
+		writeServiceError(w, repository.ErrEventRequiresPayment)
+		return
+	}
+
 	ticket, qrPNGBase64, err := h.svc.RegisterTicket(r.Context(), userID, eventID)
 	if err != nil {
 		writeServiceError(w, err)
@@ -322,6 +334,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, repository.ErrEventNotApproved), errors.Is(err, service.ErrEventNotApproved):
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{
 			Error: httpx.ErrorBody{Code: "event_not_approved", Message: "event is not approved for registration"},
+		})
+	case errors.Is(err, repository.ErrEventRequiresPayment):
+		_ = httpx.WriteJSON(w, http.StatusPaymentRequired, httpx.ErrorResponse{
+			Error: httpx.ErrorBody{Code: "payment_required", Message: "this is a paid event — use POST /api/v1/payments/initiate to purchase a ticket"},
 		})
 	case errors.Is(err, repository.ErrEventCancelled), errors.Is(err, service.ErrEventCancelled):
 		_ = httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorResponse{

@@ -119,11 +119,12 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 		})
 
 		paymentsHandler.RegisterRoutes(r, paymentsHandler.Deps{
-			DB:     db,
-			Redis:  rdb,
-			JWT:    jwt,
-			Logger: logger,
-			Cfg:    cfg,
+			DB:       db,
+			Redis:    rdb,
+			JWT:      jwt,
+			Logger:   logger,
+			Cfg:      cfg,
+			NotifSvc: notificationsSvc,
 		})
 
 		notificationsHandler.RegisterRoutes(r, notificationsHandler.Deps{

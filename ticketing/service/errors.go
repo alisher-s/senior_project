@@ -13,6 +13,8 @@ var (
 	ErrCancellationNotAllowed = errors.New("ticket cannot be cancelled after event start")
 	ErrCheckInNotOpenYet = errors.New("check-in is not open yet")
 
+	ErrEventRequiresPayment  = errors.New("event requires payment")
+
 	ErrTicketNotFound        = errors.New("ticket not found")
 	ErrTicketAlreadyCancelled = errors.New("ticket already cancelled")
 	ErrTicketAlreadyUsed    = errors.New("ticket already used")

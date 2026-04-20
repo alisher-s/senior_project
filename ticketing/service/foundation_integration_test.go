@@ -216,7 +216,7 @@ func TestPaymentsWebhookIdempotentCancelsTicket(t *testing.T) {
 
 	// Initiate payment (stub provider_url) and then fail via webhook twice.
 	payRepo := paymentsRepo.NewPostgres(pool)
-	paySvc := paymentsService.New(payRepo, ticketRepo)
+	paySvc := paymentsService.New(payRepo, ticketRepo, nil)
 	payment, _, err := paySvc.Initiate(ctx, userID, eventID, 100, "KZT")
 	if err != nil {
 		t.Fatalf("initiate payment: %v", err)
