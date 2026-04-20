@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +21,7 @@ import (
 	"github.com/nu/student-event-ticketing-platform/internal/config"
 	"github.com/nu/student-event-ticketing-platform/internal/infra/db"
 	"github.com/nu/student-event-ticketing-platform/internal/infra/redis"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
 )
 
 // Defaults for host-side `go test`: 127.0.0.1, Postgres on 5433 (see docker-compose second port mapping), Redis on 6379.
@@ -45,6 +48,16 @@ type authResponse struct {
 		Role  string    `json:"role"`
 	} `json:"user"`
 }
+
+type noopStorage struct{}
+
+func (noopStorage) UploadImage(ctx context.Context, objectName string, r io.Reader, size int64, contentType string) (string, error) {
+	return "", errors.New("noop storage")
+}
+func (noopStorage) DeleteImage(ctx context.Context, objectName string) error { return nil }
+func (noopStorage) Close() error                                        { return nil }
+
+var _ storage.Service = noopStorage{}
 
 type eventDTO struct {
 	ID                string    `json:"id"`
@@ -133,7 +146,7 @@ func TestFullLifecycleTicketing(t *testing.T) {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	logger := slog.Default()
-	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx))
+	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx, noopStorage{}))
 	t.Cleanup(srv.Close)
 	base := strings.TrimRight(srv.URL, "/")
 
@@ -316,7 +329,7 @@ func TestReRegisterAfterCancel(t *testing.T) {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	logger := slog.Default()
-	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx))
+	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx, noopStorage{}))
 	t.Cleanup(srv.Close)
 	base := strings.TrimRight(srv.URL, "/")
 
@@ -454,7 +467,7 @@ func TestTicketExpiredWhenEventEnds(t *testing.T) {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	logger := slog.Default()
-	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx))
+	srv := httptest.NewServer(apppkg.NewRouter(cfg, pool, rdb, logger, ctx, noopStorage{}))
 	t.Cleanup(srv.Close)
 	base := strings.TrimRight(srv.URL, "/")
 

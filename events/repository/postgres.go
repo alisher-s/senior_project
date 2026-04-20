@@ -276,6 +276,21 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 	return e, nil
 }
 
+func (p *Postgres) UpdateCoverImage(ctx context.Context, id uuid.UUID, coverImageURL string) error {
+	res, err := p.pool.Exec(ctx, `
+		UPDATE events
+		SET cover_image_url = $2, updated_at = NOW()
+		WHERE id = $1
+	`, id, coverImageURL)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) UpdateModeration(ctx context.Context, id uuid.UUID, st model.ModerationStatus, moderatedBy uuid.UUID) (model.Event, error) {
 	row := p.pool.QueryRow(ctx, `
 		UPDATE events

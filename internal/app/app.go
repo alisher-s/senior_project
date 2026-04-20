@@ -28,6 +28,7 @@ import (
 	notificationsService "github.com/nu/student-event-ticketing-platform/notifications/service"
 	adminHandler "github.com/nu/student-event-ticketing-platform/admin/handler"
 	analyticsHandler "github.com/nu/student-event-ticketing-platform/analytics/handler"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
 
 	_ "github.com/nu/student-event-ticketing-platform/docs"
 )
@@ -39,7 +40,7 @@ type Deps struct {
 	Logger *slog.Logger
 }
 
-func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger, workerCtx context.Context) http.Handler {
+func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger, workerCtx context.Context, storageSvc storage.Service) http.Handler {
 	// Chi chosen for a lightweight router with composable middleware and clean routing patterns.
 	r := chi.NewRouter()
 
@@ -94,7 +95,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 		})
 
 		// Events CRUD.
-		eventsHandler.RegisterRoutes(r, eventsHandler.Deps{DB: db, JWT: jwt})
+		eventsHandler.RegisterRoutes(r, eventsHandler.Deps{DB: db, JWT: jwt, Storage: storageSvc})
 
 		// Ticketing registration (capacity-safe + QR generation).
 		ticketingHandler.RegisterRoutes(r, ticketingHandler.Deps{

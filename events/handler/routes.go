@@ -15,11 +15,13 @@ import (
 	"github.com/nu/student-event-ticketing-platform/events/service"
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
 )
 
 type Deps struct {
-	DB  *pgxpool.Pool
-	JWT authx.JWT
+	DB      *pgxpool.Pool
+	JWT     authx.JWT
+	Storage storage.Service
 }
 
 func RegisterRoutes(r chi.Router, deps Deps) {
@@ -48,21 +50,23 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 		}
 	}, UpdateEventRequestDTO{})
 
-	h := &handler{repo: repo, svc: svc, v: v}
+	h := &handler{repo: repo, svc: svc, v: v, storage: deps.Storage}
 
 	r.Route("/events", func(r chi.Router) {
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/", h.handleCreate)
 		r.Get("/", h.handleList)
 		r.Get("/{id}", h.handleGetByID)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/{id}/cover-image", h.UploadCoverImage)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Put("/{id}", h.handleUpdate)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Delete("/{id}", h.handleDelete)
 	})
 }
 
 type handler struct {
-	repo repository.EventRepository
-	svc  *service.Service
-	v    *validator.Validate
+	repo    repository.EventRepository
+	svc     *service.Service
+	v       *validator.Validate
+	storage storage.Service
 }
 
 // @Summary Create an event

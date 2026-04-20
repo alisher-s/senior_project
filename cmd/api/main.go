@@ -17,6 +17,7 @@ import (
 	"github.com/nu/student-event-ticketing-platform/internal/infra/db"
 	"github.com/nu/student-event-ticketing-platform/internal/infra/observability"
 	infraRedis "github.com/nu/student-event-ticketing-platform/internal/infra/redis"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
 )
 
 // @title Student Event Ticketing Platform API
@@ -54,9 +55,17 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
+	storageSvc, err := storage.NewMinIO(ctx)
+	if err != nil {
+		logger.Error("minio_connect_failed", "error", err)
+		dbPool.Close()
+		_ = rdb.Close()
+		panic(err)
+	}
+
 	srv := &http.Server{
 		Addr:         cfg.Server.Address,
-		Handler:      app.NewRouter(cfg, dbPool, rdb, logger, workerCtx),
+		Handler:      app.NewRouter(cfg, dbPool, rdb, logger, workerCtx, storageSvc),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -89,6 +98,10 @@ func main() {
 	}
 
 	workerCancel()
+
+	if err := storageSvc.Close(); err != nil {
+		logger.Error("minio_close_failed", "error", err)
+	}
 
 	if err := rdb.Close(); err != nil {
 		logger.Error("redis_close_failed", "error", err)

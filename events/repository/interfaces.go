@@ -14,6 +14,7 @@ type EventRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (model.Event, error)
 	List(ctx context.Context, filter EventFilter) ([]model.Event, error)
 	Update(ctx context.Context, id uuid.UUID, patch EventPatch) (model.Event, error)
+	UpdateCoverImage(ctx context.Context, id uuid.UUID, coverImageURL string) error
 	UpdateModeration(ctx context.Context, id uuid.UUID, st model.ModerationStatus, moderatedBy uuid.UUID) (model.Event, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
