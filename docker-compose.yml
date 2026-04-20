@@ -36,10 +36,23 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
+      # MinIO / S3-compatible object storage for event cover images.
+      # NOTE: MINIO_ENDPOINT must be reachable from inside the `api` container.
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-event-assets}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      # Public URL must be reachable by your clients (browser / mobile).
+      # For Android Emulator use: http://10.0.2.2:9000
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
     depends_on:
       postgres:
         condition: service_started
       redis:
+        condition: service_started
+      minio:
         condition: service_started
     restart: unless-stopped
 
@@ -67,7 +80,21 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
 

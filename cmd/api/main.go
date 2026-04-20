@@ -55,7 +55,7 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
-	storageSvc, err := storage.NewMinIO(ctx)
+	storageSvc, err := connectMinIOWithRetry(ctx, logger)
 	if err != nil {
 		logger.Error("minio_connect_failed", "error", err)
 		dbPool.Close()
@@ -112,3 +112,35 @@ func main() {
 // Compile-time checks for expected imports.
 var _ *pgxpool.Pool
 var _ *redis.Client
+
+func connectMinIOWithRetry(ctx context.Context, logger interface {
+	Error(msg string, args ...any)
+}) (storage.Service, error) {
+	// Docker Compose starts containers quickly but services may not be ready yet.
+	// MinIO can take a moment to start accepting connections (formatting / init).
+	deadlineCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	backoff := 500 * time.Millisecond
+	for {
+		svc, err := storage.NewMinIO(deadlineCtx)
+		if err == nil {
+			return svc, nil
+		}
+
+		// One-line, rate-limited-ish logs to avoid spam.
+		logger.Error("minio_connect_retry", "error", err)
+
+		if deadlineCtx.Err() != nil {
+			return nil, err
+		}
+
+		time.Sleep(backoff)
+		if backoff < 5*time.Second {
+			backoff *= 2
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+		}
+	}
+}
