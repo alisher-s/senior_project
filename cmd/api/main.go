@@ -63,6 +63,14 @@ func main() {
 		storageSvc = nil
 	}
 
+	if storageSvc != nil {
+		if root := storage.ResolveStaticSeedDir(); root != "" {
+			if err := storage.SeedStaticFromDir(ctx, storageSvc, root, logger); err != nil {
+				logger.Warn("minio_static_seed_failed", "error", err)
+			}
+		}
+	}
+
 	srv := &http.Server{
 		Addr:         cfg.Server.Address,
 		Handler:      app.NewRouter(cfg, dbPool, rdb, logger, workerCtx, storageSvc),

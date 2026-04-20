@@ -18,6 +18,7 @@ USER app
 
 WORKDIR /home/app
 COPY --from=builder /bin/api /home/app/api
+COPY --from=builder /app/static /home/app/static
 
 EXPOSE 8080
 ENTRYPOINT ["/home/app/api"]
