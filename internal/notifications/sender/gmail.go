@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 
 	gomail "gopkg.in/gomail.v2"
 )
@@ -23,10 +25,14 @@ type GmailSender struct {
 }
 
 func NewGmailSender() *GmailSender {
-	host := "smtp.gmail.com"
-	port := 587
-	user := "alisher.aitkazin03@gmail.com"
-	pass := "xwgt ikvk gtig mzrn"
+	host := envOr("SMTP_HOST", "smtp.gmail.com")
+	port := envIntOr("SMTP_PORT", 587)
+	user := os.Getenv("SMTP_USER")
+	if stringsTrim(user) == "" {
+		// Backwards-compat: older envs used SMTP_FROM as the username.
+		user = os.Getenv("SMTP_FROM")
+	}
+	pass := os.Getenv("SMTP_PASSWORD")
 
 	d := gomail.NewDialer(host, port, user, pass)
 	d.TLSConfig = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
@@ -36,7 +42,7 @@ func NewGmailSender() *GmailSender {
 		port:   port,
 		user:   user,
 		pass:   pass,
-		from:   user,
+		from:   envOr("SMTP_FROM", user),
 		dialer: d,
 	}
 }
@@ -100,5 +106,24 @@ func stringsTrim(s string) string {
 		j--
 	}
 	return s[i:j]
+}
+
+func envOr(key, fallback string) string {
+	if v := stringsTrim(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntOr(key string, fallback int) int {
+	s := stringsTrim(os.Getenv(key))
+	if s == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 || v > 65535 {
+		return fallback
+	}
+	return v
 }
 
