@@ -57,10 +57,10 @@ func main() {
 
 	storageSvc, err := connectMinIOWithRetry(ctx, logger)
 	if err != nil {
+		// Keep the API usable even when object storage is misconfigured or down.
+		// Only cover image upload will be unavailable.
 		logger.Error("minio_connect_failed", "error", err)
-		dbPool.Close()
-		_ = rdb.Close()
-		panic(err)
+		storageSvc = nil
 	}
 
 	srv := &http.Server{
@@ -99,8 +99,10 @@ func main() {
 
 	workerCancel()
 
-	if err := storageSvc.Close(); err != nil {
-		logger.Error("minio_close_failed", "error", err)
+	if storageSvc != nil {
+		if err := storageSvc.Close(); err != nil {
+			logger.Error("minio_close_failed", "error", err)
+		}
 	}
 
 	if err := rdb.Close(); err != nil {
@@ -126,6 +128,10 @@ func connectMinIOWithRetry(ctx context.Context, logger interface {
 		svc, err := storage.NewMinIO(deadlineCtx)
 		if err == nil {
 			return svc, nil
+		}
+
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return nil, nil
 		}
 
 		// One-line, rate-limited-ish logs to avoid spam.

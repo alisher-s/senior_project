@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,7 +29,7 @@ func NewMinIO(ctx context.Context) (Service, error) {
 	publicURL := strings.TrimSpace(os.Getenv("MINIO_PUBLIC_URL"))
 
 	if endpoint == "" || accessKey == "" || secretKey == "" || bucket == "" || publicURL == "" {
-		return nil, errors.New("missing MINIO_* configuration")
+		return nil, ErrNotConfigured
 	}
 
 	useSSL := false
