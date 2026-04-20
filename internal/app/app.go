@@ -26,6 +26,7 @@ import (
 	notificationsHandler "github.com/nu/student-event-ticketing-platform/notifications/handler"
 	notificationsRepo "github.com/nu/student-event-ticketing-platform/notifications/repository"
 	notificationsService "github.com/nu/student-event-ticketing-platform/notifications/service"
+	notificationsSender "github.com/nu/student-event-ticketing-platform/internal/notifications/sender"
 	adminHandler "github.com/nu/student-event-ticketing-platform/admin/handler"
 	analyticsHandler "github.com/nu/student-event-ticketing-platform/analytics/handler"
 	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
@@ -59,12 +60,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 
 	// Notifications worker bootstrap (DB-backed queue); workerCtx is cancelled during API shutdown.
 	notificationsQueueRepo := notificationsRepo.NewPostgres(db)
-	var emailSender notificationsService.Sender
-	if cfg.SMTP.Host != "" {
-		emailSender = notificationsService.NewSMTPSender(cfg)
-	} else {
-		emailSender = notificationsService.NoopSender{}
-	}
+	var emailSender notificationsService.Sender = notificationsSender.NewGmailSender()
 	notificationsWorker := notificationsService.NewEmailWorker(logger, notificationsQueueRepo, emailSender, 20, 2*time.Second)
 	go notificationsWorker.Start(workerCtx)
 

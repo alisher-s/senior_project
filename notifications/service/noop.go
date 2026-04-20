@@ -2,13 +2,14 @@ package service
 
 import "context"
 
-// NoopSender does not send mail; Send always succeeds. Used when SMTP_HOST is unset.
+// NoopSender does not send mail; SendEmail always succeeds.
 type NoopSender struct{}
 
-func (NoopSender) Send(ctx context.Context, to, subject, body string) error {
+func (NoopSender) SendEmail(ctx context.Context, to, subject, htmlBody string, qrPNG []byte) error {
 	_ = ctx
 	_ = to
 	_ = subject
-	_ = body
+	_ = htmlBody
+	_ = qrPNG
 	return nil
 }

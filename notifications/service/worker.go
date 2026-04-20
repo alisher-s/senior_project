@@ -63,7 +63,9 @@ func (w *EmailWorker) processBatch(ctx context.Context) {
 	}
 
 	for _, n := range batch {
-		if err := w.sender.Send(ctx, n.To, n.Title, n.Body); err != nil {
+		// notifications_queue.body is treated as HTML (text/html).
+		// Attachment bytes are not stored in the queue; pass nil for now.
+		if err := w.sender.SendEmail(ctx, n.To, n.Title, n.Body, nil); err != nil {
 			w.logger.Error("email_send_failed",
 				"error", err,
 				"notification_id", n.ID,

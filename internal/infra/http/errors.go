@@ -59,7 +59,7 @@ const (
 	ErrCodeTicketAlreadyCancelled  = "TICKET_ALREADY_CANCELLED"
 	ErrCodeTicketAlreadyUsed       = "TICKET_ALREADY_USED"
 	ErrCodeTicketCannotBeUsed      = "TICKET_CANNOT_BE_USED"
-	ErrCodeTicketExpired           = "TICKET_EXPIRED"
+	ErrCodeTicketExpired           = "ticket_expired"
 
 	// Admin.
 	ErrCodeInvalidRole   = "INVALID_ROLE"

@@ -26,7 +26,7 @@ func NewSMTPSender(cfg config.Config) *SMTPSender {
 	}
 }
 
-func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
+func (s *SMTPSender) SendEmail(ctx context.Context, to, subject, htmlBody string, qrPNG []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -36,6 +36,9 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 	if s.from == "" {
 		return fmt.Errorf("smtp: from address not configured")
 	}
+	if len(qrPNG) > 0 {
+		return fmt.Errorf("smtp: attachments not supported by SMTPSender")
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	auth := smtp.PlainAuth("", s.from, s.password, s.host)
@@ -44,8 +47,10 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 	fmt.Fprintf(&msg, "From: %s\r\n", s.from)
 	fmt.Fprintf(&msg, "To: %s\r\n", to)
 	fmt.Fprintf(&msg, "Subject: %s\r\n", subject)
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	msg.WriteString("\r\n")
-	msg.WriteString(body)
+	msg.WriteString(htmlBody)
 
 	return smtp.SendMail(addr, auth, s.from, []string{to}, []byte(msg.String()))
 }
