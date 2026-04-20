@@ -3,17 +3,21 @@ package sender
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
+	"strings"
 
+	"github.com/nu/student-event-ticketing-platform/internal/config"
 	gomail "gopkg.in/gomail.v2"
 )
 
-// GmailSender sends emails through Gmail SMTP (STARTTLS on 587).
-// Credentials are currently hardcoded for local testing.
-type GmailSender struct {
+var ErrNotConfigured = errors.New("smtp not configured")
+
+// SMTPSender sends HTML email via SMTP.
+// - Port 587: STARTTLS (opportunistic) using gomail.
+// - Port 465: implicit TLS (SMTPS).
+type SMTPSender struct {
 	host string
 	port int
 	user string
@@ -24,36 +28,47 @@ type GmailSender struct {
 	dialer *gomail.Dialer
 }
 
-func NewGmailSender() *GmailSender {
-	host := envOr("SMTP_HOST", "smtp.gmail.com")
-	port := envIntOr("SMTP_PORT", 587)
-	user := os.Getenv("SMTP_USER")
-	if stringsTrim(user) == "" {
-		// Backwards-compat: older envs used SMTP_FROM as the username.
-		user = os.Getenv("SMTP_FROM")
+func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
+	host := strings.TrimSpace(cfg.SMTP.Host)
+	port := cfg.SMTP.Port
+	from := strings.TrimSpace(cfg.SMTP.From)
+	pass := strings.TrimSpace(cfg.SMTP.Password)
+
+	user := strings.TrimSpace(cfg.SMTP.User)
+	if user == "" {
+		user = from
 	}
-	pass := os.Getenv("SMTP_PASSWORD")
+
+	if host == "" || port <= 0 || from == "" || user == "" || pass == "" {
+		return nil, ErrNotConfigured
+	}
 
 	d := gomail.NewDialer(host, port, user, pass)
 	d.TLSConfig = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	if port == 465 {
+		d.SSL = true
+	}
 
-	return &GmailSender{
+	return &SMTPSender{
 		host:   host,
 		port:   port,
 		user:   user,
 		pass:   pass,
-		from:   envOr("SMTP_FROM", user),
+		from:   from,
 		dialer: d,
-	}
+	}, nil
 }
 
 // SendEmail sends an HTML email. If qrPNG is provided, it is attached as qr.png.
-func (s *GmailSender) SendEmail(ctx context.Context, to, subject, htmlBody string, qrPNG []byte) error {
+func (s *SMTPSender) SendEmail(ctx context.Context, to, subject, htmlBody string, qrPNG []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s == nil || s.dialer == nil {
+		return ErrNotConfigured
+	}
 	if stringsTrim(to) == "" {
-		return fmt.Errorf("gmail: missing recipient")
+		return fmt.Errorf("smtp: missing recipient")
 	}
 
 	m := gomail.NewMessage()
@@ -81,7 +96,7 @@ func (s *GmailSender) SendEmail(ctx context.Context, to, subject, htmlBody strin
 
 	// gomail doesn't support context directly; keep a conservative timeout on the dialer.
 	if err := s.dialer.DialAndSend(m); err != nil {
-		return fmt.Errorf("gmail: send failed: %w", err)
+		return fmt.Errorf("smtp: send failed: %w", err)
 	}
 	return nil
 }
@@ -107,23 +122,3 @@ func stringsTrim(s string) string {
 	}
 	return s[i:j]
 }
-
-func envOr(key, fallback string) string {
-	if v := stringsTrim(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envIntOr(key string, fallback int) int {
-	s := stringsTrim(os.Getenv(key))
-	if s == "" {
-		return fallback
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil || v <= 0 || v > 65535 {
-		return fallback
-	}
-	return v
-}
-

@@ -5,6 +5,50 @@ definitions:
       status:
         type: string
     type: object
+  handler.AdminEventDTO:
+    properties:
+      id:
+        type: string
+      moderation_status:
+        type: string
+      organizer_id:
+        type: string
+      starts_at:
+        type: string
+      title:
+        type: string
+    type: object
+  handler.AdminListEventsResponseDTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.AdminEventDTO'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+    type: object
+  handler.AdminListUsersResponseDTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.AdminUserDTO'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+    type: object
+  handler.AdminUserDTO:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+    type: object
   handler.AuthResponseDTO:
     properties:
       access_token:
@@ -425,6 +469,59 @@ info:
   title: Student Event Ticketing Platform API
   version: "0.1"
 paths:
+  /admin/events:
+    get:
+      description: Returns events for admin tooling. Default moderation_status is
+        `pending` when omitted.
+      parameters:
+      - description: Bearer access token (admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 'Filter by moderation status: pending|approved|rejected (default
+          pending)'
+        in: query
+        name: moderation_status
+        type: string
+      - description: Search by title (substring match)
+        in: query
+        name: q
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AdminListEventsResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List events for admin moderation and browsing (admin only)
+      tags:
+      - admin
   /admin/events/{id}/moderate:
     post:
       consumes:
@@ -526,6 +623,54 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: List moderation audit logs (admin only)
+      tags:
+      - admin
+  /admin/users:
+    get:
+      description: Returns basic user info for admin user management. Search is a
+        substring match on email.
+      parameters:
+      - description: Bearer access token (admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Search by email (substring match)
+        in: query
+        name: q
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.AdminListUsersResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List/search users by email (admin only)
       tags:
       - admin
   /admin/users/{id}/role:

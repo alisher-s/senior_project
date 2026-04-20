@@ -45,6 +45,8 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	h := &handler{svc: svc, v: validator.New(), logger: log}
 
 	r.Route("/admin", func(r chi.Router) {
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Get("/events", h.handleListEvents)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Get("/users", h.handleListUsers)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Post("/events/{id}/moderate", h.handleModerateEvent)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Patch("/users/{id}/role", h.handleSetUserRole)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleAdmin)).Get("/moderation-logs", h.handleListModerationLogs)
@@ -76,6 +78,18 @@ type UserRoleResponseDTO struct {
 	Role  string `json:"role"`
 }
 
+type AdminUserDTO struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+type AdminListUsersResponseDTO struct {
+	Items  []AdminUserDTO `json:"items"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+}
+
 type ModerationLogEntryDTO struct {
 	ID          string  `json:"id"`
 	AdminUserID string  `json:"admin_user_id"`
@@ -89,6 +103,20 @@ type ModerationLogsResponseDTO struct {
 	Items  []ModerationLogEntryDTO `json:"items"`
 	Limit  int                     `json:"limit"`
 	Offset int                     `json:"offset"`
+}
+
+type AdminEventDTO struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	StartsAt         string  `json:"starts_at"`
+	ModerationStatus string  `json:"moderation_status"`
+	OrganizerID      *string `json:"organizer_id,omitempty"`
+}
+
+type AdminListEventsResponseDTO struct {
+	Items  []AdminEventDTO `json:"items"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
 }
 
 // @Summary Set user role (admin only)
@@ -141,6 +169,66 @@ func (h *handler) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 		ID:    u.ID.String(),
 		Email: u.Email,
 		Role:  string(u.Role),
+	})
+}
+
+// @Summary List/search users by email (admin only)
+// @Description Returns basic user info for admin user management. Search is a substring match on email.
+// @Tags admin
+// @Produce json
+// @Param Authorization header string true "Bearer access token (admin)"
+// @Param q query string false "Search by email (substring match)"
+// @Param limit query int false "Page size (default 20, max 100)"
+// @Param offset query int false "Offset (default 0)"
+// @Success 200 {object} AdminListUsersResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /admin/users [get]
+func (h *handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	qp := r.URL.Query()
+	q := strings.TrimSpace(qp.Get("q"))
+
+	limit := 20
+	if s := qp.Get("limit"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 || v > 100 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid limit")
+			return
+		}
+		limit = v
+	}
+
+	offset := 0
+	if s := qp.Get("offset"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 || v > 100000 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid offset")
+			return
+		}
+		offset = v
+	}
+
+	items, err := h.svc.ListUsers(r.Context(), q, limit, offset)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to list users")
+		return
+	}
+
+	out := make([]AdminUserDTO, 0, len(items))
+	for _, u := range items {
+		out = append(out, AdminUserDTO{
+			ID:    u.ID.String(),
+			Email: u.Email,
+			Role:  string(u.Role),
+		})
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, AdminListUsersResponseDTO{
+		Items:  out,
+		Limit:  limit,
+		Offset: offset,
 	})
 }
 
@@ -276,6 +364,93 @@ func (h *handler) handleListModerationLogs(w http.ResponseWriter, r *http.Reques
 	}
 
 	_ = httpx.WriteJSON(w, http.StatusOK, ModerationLogsResponseDTO{
+		Items:  out,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+// @Summary List events for admin moderation and browsing (admin only)
+// @Description Returns events for admin tooling. Default moderation_status is `pending` when omitted.
+// @Tags admin
+// @Produce json
+// @Param Authorization header string true "Bearer access token (admin)"
+// @Param moderation_status query string false "Filter by moderation status: pending|approved|rejected (default pending)"
+// @Param q query string false "Search by title (substring match)"
+// @Param limit query int false "Page size (default 20, max 100)"
+// @Param offset query int false "Offset (default 0)"
+// @Success 200 {object} AdminListEventsResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse
+// @Failure 403 {object} httpx.ErrorResponse
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /admin/events [get]
+func (h *handler) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	qp := r.URL.Query()
+	q := strings.TrimSpace(qp.Get("q"))
+
+	ms := strings.ToLower(strings.TrimSpace(qp.Get("moderation_status")))
+	if ms == "" {
+		ms = "pending"
+	}
+	switch ms {
+	case "pending", "approved", "rejected":
+	default:
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid moderation_status")
+		return
+	}
+
+	limit := 20
+	if s := qp.Get("limit"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 || v > 100 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid limit")
+			return
+		}
+		limit = v
+	}
+
+	offset := 0
+	if s := qp.Get("offset"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 || v > 100000 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid offset")
+			return
+		}
+		offset = v
+	}
+
+	filter := eventsrepo.EventFilter{
+		Query:                     q,
+		ModerationStatus:          &ms,
+		RequireApprovedModeration: false,
+		Limit:                     limit,
+		Offset:                    offset,
+	}
+
+	items, err := h.svc.ListEvents(r.Context(), filter)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to list events")
+		return
+	}
+
+	out := make([]AdminEventDTO, 0, len(items))
+	for _, ev := range items {
+		var org *string
+		if ev.OrganizerID != nil {
+			s := ev.OrganizerID.String()
+			org = &s
+		}
+		out = append(out, AdminEventDTO{
+			ID:               ev.ID.String(),
+			Title:            ev.Title,
+			StartsAt:         ev.StartsAt.UTC().Format(time.RFC3339),
+			ModerationStatus: string(ev.ModerationStatus),
+			OrganizerID:      org,
+		})
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, AdminListEventsResponseDTO{
 		Items:  out,
 		Limit:  limit,
 		Offset: offset,

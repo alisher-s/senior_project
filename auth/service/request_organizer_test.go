@@ -42,6 +42,10 @@ func (s *stubUserRepo) UpdateUserRole(ctx context.Context, id uuid.UUID, role mo
 	panic("not used")
 }
 
+func (s *stubUserRepo) ListUsers(ctx context.Context, q string, limit, offset int) ([]model.User, error) {
+	panic("not used")
+}
+
 func (s *stubUserRepo) EnsureOrganizerRolePending(ctx context.Context, userID uuid.UUID) error {
 	s.ensureCalls++
 	s.ensureUID = userID

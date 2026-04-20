@@ -20,6 +20,7 @@ import (
 type UserRepository interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (authmodel.User, error)
 	UpdateUserRole(ctx context.Context, id uuid.UUID, role authmodel.Role) (authmodel.User, error)
+	ListUsers(ctx context.Context, q string, limit, offset int) ([]authmodel.User, error)
 }
 
 type ModerationLogRepository interface {
@@ -30,6 +31,7 @@ type ModerationLogRepository interface {
 type EventModerationRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (eventsmodel.Event, error)
 	UpdateModeration(ctx context.Context, id uuid.UUID, st eventsmodel.ModerationStatus, moderatedBy uuid.UUID) (eventsmodel.Event, error)
+	List(ctx context.Context, filter eventsrepo.EventFilter) ([]eventsmodel.Event, error)
 }
 
 type NotificationSender interface {
@@ -138,9 +140,18 @@ func (s *Service) SetUserRole(ctx context.Context, adminID, targetUserID uuid.UU
 	return u, nil
 }
 
+func (s *Service) ListUsers(ctx context.Context, q string, limit, offset int) ([]authmodel.User, error) {
+	return s.users.ListUsers(ctx, q, limit, offset)
+}
+
 // ListModerationLogs returns paginated moderation audit rows.
 func (s *Service) ListModerationLogs(ctx context.Context, filter repository.ModerationLogFilter) ([]model.ModerationLog, error) {
 	return s.moderation.ListModerationLogs(ctx, filter)
+}
+
+// ListEvents returns events matching the supplied filter (admin use-cases: moderation queue, browsing).
+func (s *Service) ListEvents(ctx context.Context, filter eventsrepo.EventFilter) ([]eventsmodel.Event, error) {
+	return s.events.List(ctx, filter)
 }
 
 func normalizeRole(s string) (authmodel.Role, error) {

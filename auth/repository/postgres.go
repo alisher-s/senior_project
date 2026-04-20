@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,6 +107,59 @@ func (p *Postgres) GetUserByID(ctx context.Context, id uuid.UUID) (model.User, e
 		return model.User{}, err
 	}
 	return u, nil
+}
+
+func (p *Postgres) ListUsers(ctx context.Context, q string, limit, offset int) ([]model.User, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where := []string{"1=1"}
+	args := []any{}
+	argPos := 1
+
+	if strings.TrimSpace(q) != "" {
+		where = append(where, fmt.Sprintf("email ILIKE $%d", argPos))
+		args = append(args, "%"+strings.TrimSpace(q)+"%")
+		argPos++
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, email, role, created_at, updated_at
+		FROM users
+		WHERE %s
+		ORDER BY email ASC
+		LIMIT $%d OFFSET $%d
+	`, strings.Join(where, " AND "), argPos, argPos+1)
+	args = append(args, limit, offset)
+
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]model.User, 0, limit)
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		// Intentionally omit password_hash for list endpoints.
+		u.PasswordHash = ""
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 func (p *Postgres) mergeRoleRows(ctx context.Context, u *model.User) error {

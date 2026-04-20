@@ -34,6 +34,7 @@ services:
       # Notifications SMTP: set in shell or repo-root `.env` (gitignored). See `.env.example`.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,9 @@ import (
 
 	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
 	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	notificationsModel "github.com/nu/student-event-ticketing-platform/notifications/model"
+	notificationsRepo "github.com/nu/student-event-ticketing-platform/notifications/repository"
+	notificationsService "github.com/nu/student-event-ticketing-platform/notifications/service"
 	"github.com/nu/student-event-ticketing-platform/ticketing/repository"
 	"github.com/nu/student-event-ticketing-platform/ticketing/service"
 )
@@ -29,11 +33,13 @@ type Deps struct {
 func RegisterRoutes(r chi.Router, deps Deps) {
 	repo := repository.NewPostgres(deps.DB)
 	svc := service.New(repo)
+	notificationsQueueRepo := notificationsRepo.NewPostgres(deps.DB)
+	notifier := notificationsService.New(notificationsQueueRepo)
 	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &handler{repo: repo, svc: svc, v: validator.New(), logger: logger}
+	h := &handler{db: deps.DB, repo: repo, svc: svc, notifier: notifier, v: validator.New(), logger: logger}
 
 	r.With(
 		authx.AuthMiddleware(deps.JWT),
@@ -46,10 +52,12 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 }
 
 type handler struct {
-	repo   repository.TicketRepository
-	svc    *service.Service
-	v      *validator.Validate
-	logger *slog.Logger
+	db       *pgxpool.Pool
+	repo     repository.TicketRepository
+	svc      *service.Service
+	notifier *notificationsService.Service
+	v        *validator.Validate
+	logger   *slog.Logger
 }
 
 // @Summary List my tickets
@@ -132,6 +140,44 @@ func (h *handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		status, apiErr := httpx.MapDomainError(err)
 		httpx.WriteError(w, status, apiErr.Code, apiErr.Message)
 		return
+	}
+
+	// Best-effort confirmation email. Never fail registration on email issues.
+	if h.notifier != nil && h.db != nil {
+		var userEmail string
+		if err := h.db.QueryRow(r.Context(), `SELECT email FROM users WHERE id = $1`, userID).Scan(&userEmail); err != nil {
+			h.logger.Error("ticket_confirmation_email_user_lookup_failed",
+				"error", err,
+				"request_id", httpx.GetRequestID(r),
+				"user_id", userID.String(),
+			)
+		} else {
+			var eventTitle string
+			var startsAt time.Time
+			if err := h.db.QueryRow(r.Context(), `SELECT title, starts_at FROM events WHERE id = $1`, eventID).Scan(&eventTitle, &startsAt); err != nil {
+				h.logger.Error("ticket_confirmation_email_event_lookup_failed",
+					"error", err,
+					"request_id", httpx.GetRequestID(r),
+					"event_id", eventID.String(),
+				)
+			} else {
+				subject := fmt.Sprintf("Ticket confirmed: %s", eventTitle)
+				body := service.TicketConfirmationEmailHTML(eventTitle, startsAt.UTC(), ticket.ID, qrPNGBase64)
+				if err := h.notifier.Send(r.Context(), notificationsModel.Notification{
+					Type:  notificationsModel.NotificationTypeEmail,
+					To:    userEmail,
+					Title: subject,
+					Body:  body,
+				}); err != nil {
+					h.logger.Error("ticket_confirmation_email_enqueue_failed",
+						"error", err,
+						"request_id", httpx.GetRequestID(r),
+						"ticket_id", ticket.ID.String(),
+						"to", userEmail,
+					)
+				}
+			}
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, RegisterTicketResponseDTO{

@@ -112,6 +112,7 @@ Variables are loaded from the process environment (e.g. `.env` with Docker Compo
 |----------|----------|---------|-------------|
 | `SMTP_HOST` | No | *(empty)* | SMTP server host; if empty, the email worker uses a no-op sender. |
 | `SMTP_PORT` | No | `587` | SMTP port. |
+| `SMTP_USER` | No | *(empty)* | SMTP username for auth. If empty, the app uses `SMTP_FROM` as the username. |
 | `SMTP_FROM` | No | *(empty)* | From address for outbound mail. |
 | `SMTP_PASSWORD` | No | *(empty)* | SMTP password. |
 

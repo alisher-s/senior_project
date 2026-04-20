@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,21 +16,21 @@ import (
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
+	adminHandler "github.com/nu/student-event-ticketing-platform/admin/handler"
+	analyticsHandler "github.com/nu/student-event-ticketing-platform/analytics/handler"
 	authHandler "github.com/nu/student-event-ticketing-platform/auth/handler"
-	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
-	"github.com/nu/student-event-ticketing-platform/internal/config"
-	"github.com/nu/student-event-ticketing-platform/internal/infra/rate_limit"
-	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
 	eventsHandler "github.com/nu/student-event-ticketing-platform/events/handler"
-	ticketingHandler "github.com/nu/student-event-ticketing-platform/ticketing/handler"
-	paymentsHandler "github.com/nu/student-event-ticketing-platform/payments/handler"
+	"github.com/nu/student-event-ticketing-platform/internal/config"
+	authx "github.com/nu/student-event-ticketing-platform/internal/infra/auth"
+	httpx "github.com/nu/student-event-ticketing-platform/internal/infra/http"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/rate_limit"
+	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
+	notificationsSender "github.com/nu/student-event-ticketing-platform/internal/notifications/sender"
 	notificationsHandler "github.com/nu/student-event-ticketing-platform/notifications/handler"
 	notificationsRepo "github.com/nu/student-event-ticketing-platform/notifications/repository"
 	notificationsService "github.com/nu/student-event-ticketing-platform/notifications/service"
-	notificationsSender "github.com/nu/student-event-ticketing-platform/internal/notifications/sender"
-	adminHandler "github.com/nu/student-event-ticketing-platform/admin/handler"
-	analyticsHandler "github.com/nu/student-event-ticketing-platform/analytics/handler"
-	"github.com/nu/student-event-ticketing-platform/internal/infra/storage"
+	paymentsHandler "github.com/nu/student-event-ticketing-platform/payments/handler"
+	ticketingHandler "github.com/nu/student-event-ticketing-platform/ticketing/handler"
 
 	_ "github.com/nu/student-event-ticketing-platform/docs"
 )
@@ -60,7 +61,16 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 
 	// Notifications worker bootstrap (DB-backed queue); workerCtx is cancelled during API shutdown.
 	notificationsQueueRepo := notificationsRepo.NewPostgres(db)
-	var emailSender notificationsService.Sender = notificationsSender.NewGmailSender()
+	var emailSender notificationsService.Sender = notificationsService.NoopSender{}
+	if s, err := notificationsSender.NewSMTPSender(cfg); err != nil {
+		if errors.Is(err, notificationsSender.ErrNotConfigured) {
+			logger.Info("smtp_not_configured", "message", "email worker will run with a no-op sender")
+		} else {
+			logger.Error("smtp_init_failed", "error", err, "message", "email worker will run with a no-op sender")
+		}
+	} else {
+		emailSender = s
+	}
 	notificationsWorker := notificationsService.NewEmailWorker(logger, notificationsQueueRepo, emailSender, 20, 2*time.Second)
 	go notificationsWorker.Start(workerCtx)
 
@@ -153,4 +163,3 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 		Status: "ok",
 	})
 }
-

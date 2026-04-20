@@ -11,7 +11,7 @@ type Config struct {
 	AppEnv string
 
 	Server struct {
-		Address string
+		Address      string
 		ReadTimeout  time.Duration
 		WriteTimeout time.Duration
 		IdleTimeout  time.Duration
@@ -52,7 +52,7 @@ type Config struct {
 
 	Auth struct {
 		NuEmailDomain string
-		BcryptCost     int
+		BcryptCost    int
 	}
 
 	Payments struct {
@@ -63,6 +63,7 @@ type Config struct {
 	SMTP struct {
 		Host     string
 		Port     int
+		User     string
 		From     string
 		Password string
 	}
@@ -121,6 +122,7 @@ func LoadFromEnv() (Config, error) {
 	// SMTP (notifications email worker; optional in dev if unset — worker uses a no-op sender)
 	cfg.SMTP.Host = getenvDefault("SMTP_HOST", "")
 	cfg.SMTP.Port = getenvIntDefault("SMTP_PORT", 587)
+	cfg.SMTP.User = getenvDefault("SMTP_USER", "")
 	cfg.SMTP.From = getenvDefault("SMTP_FROM", "")
 	cfg.SMTP.Password = getenvDefault("SMTP_PASSWORD", "")
 
@@ -177,4 +179,3 @@ func getenvDurationDefault(key string, def time.Duration) time.Duration {
 	}
 	return def
 }
-
