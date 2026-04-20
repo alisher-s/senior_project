@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nu/student-event-ticketing-platform/internal/config"
@@ -44,5 +45,33 @@ func Connect(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 	}
 
 	return pool, nil
+}
+
+// WithTx runs fn inside a database transaction and commits on success.
+// If fn returns an error (or panics), the transaction is rolled back.
+func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) (err error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if r := recover(); r != nil {
+			_ = tx.Rollback(ctx)
+			panic(r)
+		}
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 

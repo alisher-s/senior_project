@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nu/student-event-ticketing-platform/internal/infra/db"
 	"github.com/nu/student-event-ticketing-platform/ticketing/model"
 )
 
@@ -22,97 +23,89 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 }
 
 func (p *Postgres) RegisterTicket(ctx context.Context, userID uuid.UUID, eventID uuid.UUID, qrHashHex string, now time.Time) (model.Ticket, error) {
-	// Single transaction: lock the event row (FOR UPDATE), enforce status/time/capacity, decrement, insert ticket.
+	// Single transaction: lock the event row (FOR UPDATE), enforce status/time/capacity, insert ticket, decrement capacity.
 	// SERIALIZABLE is not required: one mutex row per event serializes registrants.
-	tx, err := p.pool.Begin(ctx)
-	if err != nil {
-		return model.Ticket{}, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
+	var out model.Ticket
+	err := db.WithTx(ctx, p.pool, func(tx pgx.Tx) error {
+		var startsAt time.Time
+		var evStatus string
+		var capAvail int
+		var modStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT starts_at, status, capacity_available, moderation_status
+			FROM events
+			WHERE id = $1
+			FOR UPDATE
+		`, eventID).Scan(&startsAt, &evStatus, &capAvail, &modStatus); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrEventNotFound
+			}
+			return err
 		}
-	}()
 
-	var startsAt time.Time
-	var evStatus string
-	var capAvail int
-	var modStatus string
-	err = tx.QueryRow(ctx, `
-		SELECT starts_at, status, capacity_available, moderation_status
-		FROM events
-		WHERE id = $1
-		FOR UPDATE
-	`, eventID).Scan(&startsAt, &evStatus, &capAvail, &modStatus)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return model.Ticket{}, ErrEventNotFound
+		switch evStatus {
+		case "published":
+		case "cancelled":
+			return ErrEventCancelled
+		default:
+			return ErrEventNotPublished
 		}
-		return model.Ticket{}, err
-	}
 
-	switch evStatus {
-	case "published":
-	case "cancelled":
-		return model.Ticket{}, ErrEventCancelled
-	default:
-		return model.Ticket{}, ErrEventNotPublished
-	}
-
-	if modStatus != "approved" {
-		return model.Ticket{}, ErrEventNotApproved
-	}
-
-	if !startsAt.After(now) {
-		return model.Ticket{}, ErrEventRegistrationClosed
-	}
-
-	if capAvail <= 0 {
-		return model.Ticket{}, ErrCapacityFull
-	}
-
-	ct, err := tx.Exec(ctx, `
-		UPDATE events
-		SET capacity_available = capacity_available - 1,
-			updated_at = NOW()
-		WHERE id = $1 AND capacity_available > 0
-	`, eventID)
-	if err != nil {
-		return model.Ticket{}, err
-	}
-	if ct.RowsAffected() == 0 {
-		return model.Ticket{}, ErrCapacityFull
-	}
-
-	// Insert ticket. Conflict only if another active/used row exists (see partial unique index).
-	ticketID := uuid.New()
-	var t model.Ticket
-	err = tx.QueryRow(ctx, `
-		INSERT INTO tickets (id, event_id, user_id, status, qr_hash_hex, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (event_id, user_id) WHERE (status IN ('active', 'used')) DO NOTHING
-		RETURNING id, event_id, user_id, status, qr_hash_hex, created_at
-	`, ticketID, eventID, userID, model.TicketStatusActive, qrHashHex, now).Scan(
-		&t.ID,
-		&t.EventID,
-		&t.UserID,
-		&t.Status,
-		&t.QRHashHex,
-		&t.CreatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return model.Ticket{}, ErrAlreadyRegistered
+		if modStatus != "approved" {
+			return ErrEventNotApproved
 		}
-		return model.Ticket{}, err
-	}
 
-	if err := tx.Commit(ctx); err != nil {
+		if !startsAt.After(now) {
+			return ErrEventRegistrationClosed
+		}
+
+		if capAvail <= 0 {
+			return ErrCapacityFull
+		}
+
+		// Insert ticket first so we only consume capacity on success.
+		ticketID := uuid.New()
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO tickets (id, event_id, user_id, status, qr_hash_hex, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (event_id, user_id) WHERE (status IN ('active', 'used')) DO NOTHING
+			RETURNING id, event_id, user_id, status, qr_hash_hex, created_at
+		`, ticketID, eventID, userID, model.TicketStatusActive, qrHashHex, now).Scan(
+			&out.ID,
+			&out.EventID,
+			&out.UserID,
+			&out.Status,
+			&out.QRHashHex,
+			&out.CreatedAt,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrAlreadyRegistered
+			}
+			return err
+		}
+
+		// Decrement capacity while still holding the event row lock.
+		ct, err := tx.Exec(ctx, `
+			UPDATE events
+			SET capacity_available = capacity_available - 1,
+				updated_at = NOW()
+			WHERE id = $1 AND capacity_available > 0
+		`, eventID)
+		if err != nil {
+			return err
+		}
+		if ct.RowsAffected() == 0 {
+			// Should be extremely rare since we already checked capAvail under FOR UPDATE,
+			// but keep it for safety (and to handle unexpected triggers/constraints).
+			return ErrCapacityFull
+		}
+
+		return nil
+	})
+	if err != nil {
 		return model.Ticket{}, err
 	}
-	committed = true
-	return t, nil
+	return out, nil
 }
 
 func (p *Postgres) GetByEventAndUser(ctx context.Context, eventID uuid.UUID, userID uuid.UUID) (model.Ticket, error) {

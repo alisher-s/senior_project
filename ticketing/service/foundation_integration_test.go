@@ -135,6 +135,98 @@ func TestTicketCapacityRace(t *testing.T) {
 	}
 }
 
+func TestTicketRegistrationConcurrencyCapacity50(t *testing.T) {
+	ctx, pool := connectDBOrSkip(t)
+
+	_, _ = pool.Exec(ctx, `
+		TRUNCATE TABLE payments, tickets, events, refresh_tokens, users RESTART IDENTITY CASCADE
+	`)
+
+	eventID := uuid.New()
+	capacityTotal := 50
+	_, err := pool.Exec(ctx, `
+		INSERT INTO events (id, title, description, starts_at, capacity_total, capacity_available, status, moderation_status)
+		VALUES ($1, 'e', 'd', NOW() + interval '1 day', $2, $2, 'published', 'approved')
+	`, eventID, capacityTotal)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	users := make([]uuid.UUID, 100)
+	for i := range users {
+		users[i] = uuid.New()
+		email := "u_conc_" + uuid.NewString() + "@nu.edu.kz"
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO users (id, email, password_hash, role)
+			VALUES ($1, $2, 'x', 'student')
+		`, users[i], email); err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+	}
+
+	repo := ticketingRepo.NewPostgres(pool)
+	svc := ticketingService.New(repo)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make(chan error, len(users))
+
+	for _, userID := range users {
+		wg.Add(1)
+		go func(uid uuid.UUID) {
+			defer wg.Done()
+			<-start
+			_, _, err := svc.RegisterTicket(ctx, uid, eventID)
+			results <- err
+		}(userID)
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	capacityErrors := 0
+	otherErrors := 0
+	for err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, ticketingRepo.ErrCapacityFull) {
+			capacityErrors++
+			continue
+		}
+		otherErrors++
+	}
+
+	if successes != capacityTotal {
+		t.Fatalf("expected %d successful registrations, got %d", capacityTotal, successes)
+	}
+	if capacityErrors != len(users)-capacityTotal {
+		t.Fatalf("expected %d capacity errors, got %d", len(users)-capacityTotal, capacityErrors)
+	}
+	if otherErrors != 0 {
+		t.Fatalf("expected no other errors, got %d", otherErrors)
+	}
+
+	var capacityAvailable int
+	if err := pool.QueryRow(ctx, `SELECT capacity_available FROM events WHERE id=$1`, eventID).Scan(&capacityAvailable); err != nil {
+		t.Fatalf("query capacity_available: %v", err)
+	}
+	if capacityAvailable != 0 {
+		t.Fatalf("expected capacity_available=0, got %d", capacityAvailable)
+	}
+
+	var ticketsCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tickets WHERE event_id=$1 AND status='active'`, eventID).Scan(&ticketsCount); err != nil {
+		t.Fatalf("query tickets count: %v", err)
+	}
+	if ticketsCount != capacityTotal {
+		t.Fatalf("expected %d active tickets, got %d", capacityTotal, ticketsCount)
+	}
+}
+
 func TestAuthRefreshSingleUse(t *testing.T) {
 	ctx, pool := connectDBOrSkip(t)
 	cfg, _ := config.LoadFromEnv()
