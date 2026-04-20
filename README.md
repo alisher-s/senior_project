@@ -774,6 +774,22 @@ Current ticket **`status`** values in the API: **`active`**, **`used`**, **`canc
 - **`used`:** check-in completed; show as “used” / hide QR for re-entry per product rules.
 - **`cancelled`:** show as cancelled.
 
+---
+
+## One-command teammate sync (pull + DB migrations)
+
+From the repo root:
+
+```bash
+bash scripts/sync.sh
+```
+
+If your Postgres is exposed on a different host port (e.g. `5432`), run:
+
+```bash
+POSTGRES_PORT=5432 bash scripts/sync.sh
+```
+
 **Payments:** there is no `pending_payment` status on tickets in this API. **`POST /payments/initiate`** is currently **501**. Free vs paid pricing is not modeled on events; all successful registrations follow the flow above.
 
 ---
