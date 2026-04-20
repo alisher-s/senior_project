@@ -7,8 +7,24 @@ on:
     branches: [main, master]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL_TEST: postgres://postgres:postgres@localhost:5432/app?sslmode=disable
     services:
       postgres:
         image: postgres:16-alpine
@@ -33,21 +49,20 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install psql client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      - name: Apply SQL migrations (happy-path schema)
+      - name: Run DB migrations (DATABASE_URL_TEST)
         env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: app
-        run: bash scripts/apply-migrations.sh
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+        run: bash scripts/migrate.sh up
+
+      - name: Migrate check (not dirty, no pending migrations)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+        run: bash scripts/migrate.sh check
 
       - name: Go test
         env:
           APP_ENV: development
+          DATABASE_URL_TEST: ${{ env.DATABASE_URL_TEST }}
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5432
           POSTGRES_USER: postgres
@@ -60,4 +75,4 @@ jobs:
           JWT_ACCESS_SECRET: ci_access_secret
           JWT_REFRESH_SECRET: ci_refresh_secret
           PAYMENTS_WEBHOOK_SECRET: ci_webhook_secret
-        run: go test ./...
+        run: go test ./... -race -count=1

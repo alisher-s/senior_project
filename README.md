@@ -798,7 +798,7 @@ POSTGRES_PORT=5432 bash scripts/sync.sh
 
 Requirements: **Go 1.22+**, **PostgreSQL**, **Redis** (same schema/migrations as Docker).
 
-1. Apply migrations (see `docker/postgres/migrations` or your project script).
+1. Run migrations before starting the server: `make migrate-up`
 2. Export environment variables. **Minimum to start** (non-development) per `LoadFromEnv`:
 
 - `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (non-empty)

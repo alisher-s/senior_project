@@ -23,6 +23,7 @@ type EventFilter struct {
 	Query                     string
 	StartsAfter               *time.Time
 	OrganizerID               *uuid.UUID
+	ModerationStatus          *string
 	StartsBefore              *time.Time
 	RequireApprovedModeration bool
 	Limit                     int
