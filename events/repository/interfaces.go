@@ -21,6 +21,7 @@ type EventRepository interface {
 type EventFilter struct {
 	Query                     string
 	StartsAfter               *time.Time
+	OrganizerID               *uuid.UUID
 	StartsBefore              *time.Time
 	RequireApprovedModeration bool
 	Limit                     int
