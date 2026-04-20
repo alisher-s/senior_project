@@ -9,9 +9,9 @@ import (
 type EventStatus string
 
 const (
-	EventStatusDraft      EventStatus = "draft"
-	EventStatusPublished  EventStatus = "published"
-	EventStatusCancelled  EventStatus = "cancelled"
+	EventStatusDraft     EventStatus = "draft"
+	EventStatusPublished EventStatus = "published"
+	EventStatusCancelled EventStatus = "cancelled"
 )
 
 // ModerationStatus is admin review state (distinct from EventStatus lifecycle).
@@ -24,18 +24,19 @@ const (
 )
 
 type Event struct {
-	ID                  uuid.UUID
-	Title               string
-	Description         string
-	CoverImageURL       string
-	StartsAt            time.Time
-	CapacityTotal      int
-	CapacityAvailable  int
-	Status              EventStatus
-	ModerationStatus    ModerationStatus
-	ModeratedBy         *uuid.UUID
-	OrganizerID         *uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                uuid.UUID
+	Title             string
+	Description       string
+	CoverImageURL     string
+	StartsAt          time.Time
+	Location          *string
+	EndAt             *time.Time
+	CapacityTotal     int
+	CapacityAvailable int
+	Status            EventStatus
+	ModerationStatus  ModerationStatus
+	ModeratedBy       *uuid.UUID
+	OrganizerID       *uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
-

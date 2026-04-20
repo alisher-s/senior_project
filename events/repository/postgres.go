@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -33,12 +34,30 @@ func uuidPtrFromPG(u pgtype.UUID) *uuid.UUID {
 	return &id
 }
 
+func stringPtrFromPG(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	s := t.String
+	return &s
+}
+
+func timePtrFromPG(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	tt := t.Time
+	return &tt
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanEventRow(row rowScanner) (model.Event, error) {
 	var e model.Event
+	var location pgtype.Text
+	var endAt pgtype.Timestamptz
 	var modBy pgtype.UUID
 	var orgID pgtype.UUID
 	err := row.Scan(
@@ -47,6 +66,8 @@ func scanEventRow(row rowScanner) (model.Event, error) {
 		&e.Description,
 		&e.CoverImageURL,
 		&e.StartsAt,
+		&location,
+		&endAt,
 		&e.CapacityTotal,
 		&e.CapacityAvailable,
 		&e.Status,
@@ -59,6 +80,8 @@ func scanEventRow(row rowScanner) (model.Event, error) {
 	if err != nil {
 		return model.Event{}, err
 	}
+	e.Location = stringPtrFromPG(location)
+	e.EndAt = timePtrFromPG(endAt)
 	e.ModeratedBy = uuidPtrFromPG(modBy)
 	e.OrganizerID = uuidPtrFromPG(orgID)
 	return e, nil
@@ -74,12 +97,20 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 	if e.OrganizerID != nil {
 		orgID = *e.OrganizerID
 	}
+	var location any
+	if e.Location != nil {
+		location = *e.Location
+	}
+	var endAt any
+	if e.EndAt != nil {
+		endAt = *e.EndAt
+	}
 	row := p.pool.QueryRow(ctx, `
-		INSERT INTO events (id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status, organizer_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
+		INSERT INTO events (id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status, organizer_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status,
 			moderation_status, moderated_by, organizer_id, created_at, updated_at
-	`, id, e.Title, e.Description, e.CoverImageURL, e.StartsAt, e.CapacityTotal, e.CapacityAvailable, st, orgID)
+	`, id, e.Title, e.Description, e.CoverImageURL, e.StartsAt, location, endAt, e.CapacityTotal, e.CapacityAvailable, st, orgID)
 	created, err := scanEventRow(row)
 	if err != nil {
 		return model.Event{}, err
@@ -89,7 +120,7 @@ func (p *Postgres) Create(ctx context.Context, e model.Event) (model.Event, erro
 
 func (p *Postgres) GetByID(ctx context.Context, id uuid.UUID) (model.Event, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
+		SELECT id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status,
 			moderation_status, moderated_by, organizer_id, created_at, updated_at
 		FROM events
 		WHERE id = $1
@@ -136,7 +167,7 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
+		SELECT id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status,
 			moderation_status, moderated_by, organizer_id, created_at, updated_at
 		FROM events
 		WHERE %s
@@ -191,6 +222,16 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		args = append(args, *patch.StartsAt)
 		argPos++
 	}
+	if patch.Location != nil {
+		set = append(set, fmt.Sprintf("location = $%d", argPos))
+		args = append(args, *patch.Location)
+		argPos++
+	}
+	if patch.EndAt != nil {
+		set = append(set, fmt.Sprintf("end_at = $%d", argPos))
+		args = append(args, *patch.EndAt)
+		argPos++
+	}
 	if patch.CapacityTotal != nil {
 		patchVal := *patch.CapacityTotal
 		patchValPos := argPos
@@ -201,7 +242,7 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 			"capacity_available = GREATEST(0, $%d - ("+
 				"SELECT COUNT(*) FROM tickets t "+
 				"WHERE t.event_id = events.id AND t.status IN ('active','used')"+
-			"))",
+				"))",
 			patchValPos,
 		))
 	}
@@ -220,7 +261,7 @@ func (p *Postgres) Update(ctx context.Context, id uuid.UUID, patch EventPatch) (
 		UPDATE events
 		SET %s, updated_at = NOW()
 		WHERE id = $%d
-		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
+		RETURNING id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status,
 			moderation_status, moderated_by, organizer_id, created_at, updated_at
 	`, strings.Join(set, ", "), argPos)
 
@@ -240,7 +281,7 @@ func (p *Postgres) UpdateModeration(ctx context.Context, id uuid.UUID, st model.
 		UPDATE events
 		SET moderation_status = $2, moderated_by = $3, updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, title, description, cover_image_url, starts_at, capacity_total, capacity_available, status,
+		RETURNING id, title, description, cover_image_url, starts_at, location, end_at, capacity_total, capacity_available, status,
 			moderation_status, moderated_by, organizer_id, created_at, updated_at
 	`, id, string(st), moderatedBy)
 	e, err := scanEventRow(row)

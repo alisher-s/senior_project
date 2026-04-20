@@ -26,7 +26,29 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	repo := repository.NewPostgres(deps.DB)
 	svc := service.New(repo)
 
-	h := &handler{repo: repo, svc: svc, v: validator.New()}
+	v := validator.New()
+	// Cross-field validation: if end_at is provided, it must be strictly after starts_at.
+	v.RegisterStructValidation(func(sl validator.StructLevel) {
+		req, ok := sl.Current().Interface().(CreateEventRequestDTO)
+		if !ok {
+			return
+		}
+		if req.EndAt != nil && !req.EndAt.After(req.StartsAt) {
+			sl.ReportError(req.EndAt, "EndAt", "end_at", "gtfield", "starts_at")
+		}
+	}, CreateEventRequestDTO{})
+	v.RegisterStructValidation(func(sl validator.StructLevel) {
+		req, ok := sl.Current().Interface().(UpdateEventRequestDTO)
+		if !ok {
+			return
+		}
+		// For updates we can only validate when both are provided in the request.
+		if req.EndAt != nil && req.StartsAt != nil && !req.EndAt.After(*req.StartsAt) {
+			sl.ReportError(req.EndAt, "EndAt", "end_at", "gtfield", "starts_at")
+		}
+	}, UpdateEventRequestDTO{})
+
+	h := &handler{repo: repo, svc: svc, v: v}
 
 	r.Route("/events", func(r chi.Router) {
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/", h.handleCreate)
@@ -44,7 +66,7 @@ type handler struct {
 }
 
 // @Summary Create an event
-// @Description Creates a draft/published event for the authenticated organizer or admin. New events start with moderation_status pending until an admin approves.
+// @Description Creates an event for the authenticated organizer or admin. New events start with moderation_status pending until an admin approves. Optional fields: location, end_at (must be after starts_at).
 // @Tags events
 // @Accept json
 // @Produce json
@@ -69,7 +91,7 @@ func (h *handler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, organizerID)
+	ev, err := h.svc.Create(r.Context(), req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.Location, req.EndAt, req.CapacityTotal, organizerID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to create event")
 		return
@@ -194,6 +216,7 @@ func (h *handler) handleGetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Update event by ID
+// @Description Updates event fields. Optional fields: location, end_at (must be after starts_at).
 // @Tags events
 // @Accept json
 // @Produce json
@@ -245,13 +268,27 @@ func (h *handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure the post-update (starts_at, end_at) pair is valid, even if only one field is patched.
+	newStartsAt := existing.StartsAt
+	if req.StartsAt != nil {
+		newStartsAt = *req.StartsAt
+	}
+	newEndAt := existing.EndAt
+	if req.EndAt != nil {
+		newEndAt = req.EndAt
+	}
+	if newEndAt != nil && !newEndAt.After(newStartsAt) {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "end_at must be after starts_at")
+		return
+	}
+
 	var statusPatch *model.EventStatus
 	if req.Status != nil {
 		s := model.EventStatus(*req.Status)
 		statusPatch = &s
 	}
 
-	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.CapacityTotal, statusPatch)
+	ev, err := h.svc.Update(r.Context(), id, req.Title, req.Description, req.CoverImageURL, req.StartsAt, req.Location, req.EndAt, req.CapacityTotal, statusPatch)
 	if err != nil {
 		status, apiErr := httpx.MapDomainError(err)
 		if status >= 500 {
@@ -331,6 +368,8 @@ func eventToDTO(ev model.Event) EventDTO {
 		Description:       ev.Description,
 		CoverImageURL:     ev.CoverImageURL,
 		StartsAt:          ev.StartsAt,
+		Location:          ev.Location,
+		EndAt:             ev.EndAt,
 		CapacityTotal:     ev.CapacityTotal,
 		CapacityAvailable: ev.CapacityAvailable,
 		Status:            string(ev.Status),

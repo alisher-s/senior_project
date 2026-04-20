@@ -28,11 +28,12 @@ type EventFilter struct {
 }
 
 type EventPatch struct {
-	Title             *string
-	Description       *string
-	CoverImageURL     *string
-	StartsAt          *time.Time
-	CapacityTotal     *int
-	Status            *model.EventStatus
+	Title         *string
+	Description   *string
+	CoverImageURL *string
+	StartsAt      *time.Time
+	Location      *string
+	EndAt         *time.Time
+	CapacityTotal *int
+	Status        *model.EventStatus
 }
-
