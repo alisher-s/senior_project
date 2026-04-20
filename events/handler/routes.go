@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -55,6 +56,7 @@ func RegisterRoutes(r chi.Router, deps Deps) {
 	r.Route("/events", func(r chi.Router) {
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/", h.handleCreate)
 		r.Get("/", h.handleList)
+		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Get("/mine", h.handleListMine)
 		r.Get("/{id}", h.handleGetByID)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Post("/{id}/cover-image", h.UploadCoverImage)
 		r.With(authx.AuthMiddleware(deps.JWT), authx.RequireRole(authx.RoleOrganizer, authx.RoleAdmin)).Put("/{id}", h.handleUpdate)
@@ -163,6 +165,120 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 		StartsAfter:               startsAfter,
 		StartsBefore:              startsBefore,
 		RequireApprovedModeration: true,
+		Limit:                     limit,
+		Offset:                    offset,
+	}
+
+	items, err := h.svc.List(r.Context(), filter)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.ErrCodeInternalError, "failed to list events")
+		return
+	}
+
+	resp := make([]EventDTO, 0, len(items))
+	for _, ev := range items {
+		resp = append(resp, eventToDTO(ev))
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, ListEventsResponseDTO{
+		Items:  resp,
+		Limit:  filter.Limit,
+		Offset: filter.Offset,
+	})
+}
+
+// @Summary List my events (dashboard)
+// @Description Authenticated listing for organizers/admins. Organizers see their own events (any moderation status). Admins may see all events or filter by organizer_id.
+// @Tags events
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer access token (organizer or admin)"
+// @Param q query string false "Search query"
+// @Param limit query int false "Page size (default 20 if omitted or invalid; max 100)"
+// @Param offset query int false "Offset (default 0)"
+// @Param starts_after query string false "Filter starts_after (RFC3339)"
+// @Param starts_before query string false "Filter starts_before (RFC3339)"
+// @Param organizer_id query string false "Admin only: filter by organizer ID (UUID)"
+// @Success 200 {object} ListEventsResponseDTO
+// @Failure 400 {object} httpx.ErrorResponse
+// @Failure 401 {object} httpx.ErrorResponse "Missing/invalid JWT"
+// @Failure 403 {object} httpx.ErrorResponse "Wrong role"
+// @Failure 500 {object} httpx.ErrorResponse
+// @Router /events/mine [get]
+func (h *handler) handleListMine(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	limit := 0
+	offset := 0
+
+	if s := r.URL.Query().Get("limit"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 || v > 100 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid limit")
+			return
+		}
+		limit = v
+	}
+	if s := r.URL.Query().Get("offset"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 || v > 100000 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid offset")
+			return
+		}
+		offset = v
+	}
+
+	var startsAfter *time.Time
+	if s := r.URL.Query().Get("starts_after"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			startsAfter = &t
+		} else {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid starts_after")
+			return
+		}
+	}
+	var startsBefore *time.Time
+	if s := r.URL.Query().Get("starts_before"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			startsBefore = &t
+		} else {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid starts_before")
+			return
+		}
+	}
+
+	callerID, ok := authx.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrCodeUnauthorized, "missing user id")
+		return
+	}
+
+	isAdmin := authx.HasRole(r.Context(), authx.RoleAdmin)
+	isOrganizer := authx.HasRole(r.Context(), authx.RoleOrganizer)
+
+	var organizerID *uuid.UUID
+	switch {
+	case isAdmin:
+		if s := strings.TrimSpace(r.URL.Query().Get("organizer_id")); s != "" {
+			id, err := uuid.Parse(s)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, httpx.ErrCodeInvalidRequest, "invalid organizer_id")
+				return
+			}
+			organizerID = &id
+		}
+	case isOrganizer:
+		organizerID = &callerID
+	default:
+		httpx.WriteError(w, http.StatusForbidden, httpx.ErrCodeForbidden, "forbidden")
+		return
+	}
+
+	filter := repository.EventFilter{
+		Query:                     q,
+		StartsAfter:               startsAfter,
+		StartsBefore:              startsBefore,
+		OrganizerID:               organizerID,
+		RequireApprovedModeration: false,
 		Limit:                     limit,
 		Offset:                    offset,
 	}

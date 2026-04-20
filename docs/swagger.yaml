@@ -37,6 +37,12 @@ definitions:
       description:
         maxLength: 2000
         type: string
+      end_at:
+        example: "2026-01-01T12:00:00Z"
+        type: string
+      location:
+        maxLength: 512
+        type: string
       starts_at:
         description: RFC3339 / RFC3339Nano
         example: "2026-01-01T10:00:00Z"
@@ -60,7 +66,11 @@ definitions:
         type: string
       description:
         type: string
+      end_at:
+        type: string
       id:
+        type: string
+      location:
         type: string
       moderation_status:
         type: string
@@ -322,6 +332,12 @@ definitions:
       description:
         maxLength: 2000
         type: string
+      end_at:
+        example: "2026-01-01T12:00:00Z"
+        type: string
+      location:
+        maxLength: 512
+        type: string
       starts_at:
         example: "2026-01-01T10:00:00Z"
         type: string
@@ -380,7 +396,7 @@ definitions:
       role:
         type: string
     type: object
-  httpx.ErrorBody:
+  httpx.APIError:
     properties:
       code:
         type: string
@@ -390,7 +406,7 @@ definitions:
   httpx.ErrorResponse:
     properties:
       error:
-        $ref: '#/definitions/httpx.ErrorBody'
+        $ref: '#/definitions/httpx.APIError'
     type: object
   model.RegistrationHour:
     properties:
@@ -808,8 +824,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a draft/published event for the authenticated organizer
-        or admin. New events start with moderation_status pending until an admin approves.
+      description: 'Creates an event for the authenticated organizer or admin. New
+        events start with moderation_status pending until an admin approves. Optional
+        fields: location, end_at (must be after starts_at).'
       parameters:
       - description: Bearer access token (organizer or admin)
         in: header
@@ -928,6 +945,8 @@ paths:
     put:
       consumes:
       - application/json
+      description: 'Updates event fields. Optional fields: location, end_at (must
+        be after starts_at).'
       parameters:
       - description: Bearer access token (organizer or admin)
         in: header
@@ -973,6 +992,69 @@ paths:
           schema:
             $ref: '#/definitions/httpx.ErrorResponse'
       summary: Update event by ID
+      tags:
+      - events
+  /events/mine:
+    get:
+      consumes:
+      - application/json
+      description: Authenticated listing for organizers/admins. Organizers see their
+        own events (any moderation status). Admins may see all events or filter by
+        organizer_id.
+      parameters:
+      - description: Bearer access token (organizer or admin)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Page size (default 20 if omitted or invalid; max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Filter starts_after (RFC3339)
+        in: query
+        name: starts_after
+        type: string
+      - description: Filter starts_before (RFC3339)
+        in: query
+        name: starts_before
+        type: string
+      - description: 'Admin only: filter by organizer ID (UUID)'
+        in: query
+        name: organizer_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListEventsResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "401":
+          description: Missing/invalid JWT
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "403":
+          description: Wrong role
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpx.ErrorResponse'
+      summary: List my events (dashboard)
       tags:
       - events
   /healthz:
@@ -1261,8 +1343,9 @@ paths:
       consumes:
       - application/json
       description: Check-in by QR hash; requires organizer or admin. **401** — JWT;
-        **403** — not organizer/admin; **400** — `ticket_expired` (strictly after end instant; `end_at` is inclusive); **409** — `ticket_already_used`,
-        `check_in_not_open`, `ticket_cannot_be_used`, …
+        **403** — not organizer/admin; **400** — `ticket_expired` (strictly after
+        end instant; `end_at` is inclusive); **409** — `ticket_already_used`, `check_in_not_open`,
+        `ticket_cannot_be_used`, …
       parameters:
       - description: Bearer access token (organizer or admin)
         in: header

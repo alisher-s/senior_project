@@ -606,7 +606,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Creates a draft/published event for the authenticated organizer or admin. New events start with moderation_status pending until an admin approves.",
+                "description": "Creates an event for the authenticated organizer or admin. New events start with moderation_status pending until an admin approves. Optional fields: location, end_at (must be after starts_at).",
                 "consumes": [
                     "application/json"
                 ],
@@ -656,6 +656,98 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Authenticated but not organizer/admin (code: forbidden)",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/events/mine": {
+            "get": {
+                "description": "Authenticated listing for organizers/admins. Organizers see their own events (any moderation status). Admins may see all events or filter by organizer_id.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "events"
+                ],
+                "summary": "List my events (dashboard)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer access token (organizer or admin)",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 20 if omitted or invalid; max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter starts_after (RFC3339)",
+                        "name": "starts_after",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter starts_before (RFC3339)",
+                        "name": "starts_before",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Admin only: filter by organizer ID (UUID)",
+                        "name": "organizer_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListEventsResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing/invalid JWT",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Wrong role",
                         "schema": {
                             "$ref": "#/definitions/httpx.ErrorResponse"
                         }
@@ -719,6 +811,7 @@ const docTemplate = `{
                 }
             },
             "put": {
+                "description": "Updates event fields. Optional fields: location, end_at (must be after starts_at).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1408,6 +1501,14 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2000
                 },
+                "end_at": {
+                    "type": "string",
+                    "example": "2026-01-01T12:00:00Z"
+                },
+                "location": {
+                    "type": "string",
+                    "maxLength": 512
+                },
                 "starts_at": {
                     "description": "RFC3339 / RFC3339Nano",
                     "type": "string",
@@ -1435,7 +1536,13 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "end_at": {
+                    "type": "string"
+                },
                 "id": {
+                    "type": "string"
+                },
+                "location": {
                     "type": "string"
                 },
                 "moderation_status": {
@@ -1817,6 +1924,14 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2000
                 },
+                "end_at": {
+                    "type": "string",
+                    "example": "2026-01-01T12:00:00Z"
+                },
+                "location": {
+                    "type": "string",
+                    "maxLength": 512
+                },
                 "starts_at": {
                     "type": "string",
                     "example": "2026-01-01T10:00:00Z"
@@ -1904,7 +2019,7 @@ const docTemplate = `{
                 }
             }
         },
-        "httpx.ErrorBody": {
+        "httpx.APIError": {
             "type": "object",
             "properties": {
                 "code": {
@@ -1919,7 +2034,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "error": {
-                    "$ref": "#/definitions/httpx.ErrorBody"
+                    "$ref": "#/definitions/httpx.APIError"
                 }
             }
         },

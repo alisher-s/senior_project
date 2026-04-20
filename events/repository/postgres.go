@@ -152,6 +152,16 @@ func (p *Postgres) List(ctx context.Context, filter EventFilter) ([]model.Event,
 	if filter.RequireApprovedModeration {
 		where = append(where, "moderation_status = 'approved'")
 	}
+	if filter.OrganizerID != nil {
+		where = append(where, fmt.Sprintf("organizer_id = $%d", argPos))
+		args = append(args, *filter.OrganizerID)
+		argPos++
+	}
+	if filter.ModerationStatus != nil && strings.TrimSpace(*filter.ModerationStatus) != "" {
+		where = append(where, fmt.Sprintf("moderation_status = $%d", argPos))
+		args = append(args, strings.TrimSpace(*filter.ModerationStatus))
+		argPos++
+	}
 	if strings.TrimSpace(filter.Query) != "" {
 		where = append(where, fmt.Sprintf("title ILIKE $%d", argPos))
 		args = append(args, "%"+strings.TrimSpace(filter.Query)+"%")
