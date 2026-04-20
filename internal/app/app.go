@@ -50,7 +50,7 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, rdb *redis.Client, logger *s
 	r.Use(httpx.SecurityHeaders())
 	r.Use(httpx.Logging(logger))
 	r.Use(httpx.Recovery(logger))
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(httpx.RequestTimeout(25 * time.Second))
 
 	// Redis-based rate limiting.
 	r.Use(rate_limit.Middleware(rdb, cfg))

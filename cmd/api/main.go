@@ -57,9 +57,9 @@ func main() {
 	srv := &http.Server{
 		Addr:         cfg.Server.Address,
 		Handler:      app.NewRouter(cfg, dbPool, rdb, logger, workerCtx),
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
@@ -81,8 +81,8 @@ func main() {
 		logger.Error("server_listen_error", "error", err)
 	}
 
-	// Stop accepting new connections; drain in-flight requests (5–10s budget).
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	// Stop accepting new connections; drain in-flight requests.
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server_shutdown_failed", "error", err)
