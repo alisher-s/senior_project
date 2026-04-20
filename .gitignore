@@ -1,0 +1,13 @@
+# Local secrets (never commit). Use tracked `.env.example` files as templates.
+.env
+*.env
+/bin/
+/dist/
+# Root-only: ignore local binary named `api`, not `cmd/api/` (entrypoint).
+/api
+*.log
+coverage.out
+.DS_Store
+.idea/
+.vscode/
+
